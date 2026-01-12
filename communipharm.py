@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. System Config
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm (Multiplayer)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm (Multiplayer Full)", layout="wide")
 
 # ค่าเริ่มต้นตลาด (Market Params)
 DEFAULT_MARKET = {
@@ -20,13 +20,11 @@ DEFAULT_MARKET = {
 }
 
 # ==========================================
-# 2. State Initialization (สร้างข้อมูล 7 ทีม)
+# 2. State Initialization
 # ==========================================
-# โหลดค่า Market
 if 'market_params' not in st.session_state:
     st.session_state.market_params = DEFAULT_MARKET.copy()
 
-# โหลดข้อมูลผู้เล่น (ถ้ายังไม่มี ให้สร้าง 7 ทีม)
 if 'players' not in st.session_state:
     st.session_state.players = {}
     for i in range(1, 8): # สร้าง Team 1 ถึง Team 7
@@ -39,19 +37,18 @@ if 'players' not in st.session_state:
                 'inv_otc': 40000.0,
                 'loans': 0.0
             },
-            'history': [] # เก็บประวัติแยกของใครของมัน
+            'history': []
         }
 
 # ==========================================
-# 3. Logic Engine (รองรับ Team ID) 🧠
+# 3. Logic Engine 🧠
 # ==========================================
 def run_period(team_name, decisions):
-    # ดึงข้อมูลเฉพาะทีมที่เล่น
     player_data = st.session_state.players[team_name]
     fin = player_data['financials']
     mkt = st.session_state.market_params
     
-    # --- Logic คำนวณ (เหมือนเดิม) ---
+    # --- Logic ---
     price_sensitivity = 1.0 - ((decisions['rx_fee'] - mkt['mkt_rx_fee']) / 10.0)
     service_score = 1.0
     if decisions['delivery']: service_score += 0.05
@@ -88,7 +85,6 @@ def run_period(team_name, decisions):
     fin['inv_rx'] += decisions['buy_rx'] - cogs_rx
     fin['inv_otc'] += decisions['buy_otc'] - cogs_otc
     
-    # บันทึก History ลงในทีมนั้นๆ
     player_data['history'].append({
         "Period": player_data['period'],
         "Total Sales": rx_revenue + otc_revenue,
@@ -98,7 +94,7 @@ def run_period(team_name, decisions):
     player_data['period'] += 1
 
 # ==========================================
-# 4. Sidebar: Login & Team Selector
+# 4. Sidebar
 # ==========================================
 with st.sidebar:
     st.header("🔐 ระบบเข้าใช้งาน")
@@ -108,10 +104,9 @@ with st.sidebar:
     is_admin = False
     
     if role == "Student (นักเรียน)":
-        # เลือกทีมที่จะเล่น
         team_list = list(st.session_state.players.keys())
         selected_team = st.selectbox("เลือกทีมของคุณ (Select Team)", team_list)
-        st.info(f"คุณกำลังเล่นในชื่อ: **{selected_team}**")
+        st.info(f"Team: **{selected_team}**")
         
     else: # Instructor
         pwd = st.text_input("รหัสผ่านอาจารย์", type="password")
@@ -120,7 +115,7 @@ with st.sidebar:
             st.success("Admin Mode ✅")
         
     st.divider()
-    if st.button("Reset All Teams (ล้างกระดาน)"):
+    if st.button("Reset All Teams"):
         st.session_state.clear()
         st.rerun()
 
@@ -130,102 +125,36 @@ with st.sidebar:
 
 if is_admin:
     # ----------------------------------
-    # 👨‍🏫 INSTRUCTOR DASHBOARD
+    # 👨‍🏫 INSTRUCTOR FULL CONTROL
     # ----------------------------------
-    st.title("🏆 Instructor Leaderboard")
+    st.title("👨‍🏫 Instructor Control Panel")
     
-    # 1. ปรับค่าตลาด (เหมือนเดิม)
-    with st.expander("⚙️ ปรับตั้งค่าตลาด (Game Parameters)"):
+    # 1. ปรับค่าตลาด (Full Options)
+    with st.expander("⚙️ ตั้งค่าตัวแปรตลาด (Market Parameters)", expanded=True):
         with st.form("admin_settings"):
-            c1, c2 = st.columns(2)
+            st.markdown("#### 1. สภาพตลาด & คู่แข่ง")
+            c1, c2, c3, c4 = st.columns(4)
             new_traffic = c1.number_input("Base Traffic", value=st.session_state.market_params['base_traffic'])
-            new_rent = c2.number_input("Rent", value=st.session_state.market_params['rent'])
-            if st.form_submit_button("Update Params"):
-                st.session_state.market_params['base_traffic'] = new_traffic
-                st.session_state.market_params['rent'] = new_rent
-                st.rerun()
+            new_rx_fee = c2.number_input("Mkt Rx Fee ($)", value=st.session_state.market_params['mkt_rx_fee'])
+            new_w_pharm = c3.number_input("Mkt Pharm Wage", value=st.session_state.market_params['mkt_wage_pharm'])
+            new_w_clerk = c4.number_input("Mkt Clerk Wage", value=st.session_state.market_params['mkt_wage_clerk'])
+            
+            st.markdown("#### 2. ต้นทุนคงที่ & เศรษฐกิจ")
+            c5, c6, c7, c8 = st.columns(4)
+            new_rent = c5.number_input("Rent ($)", value=st.session_state.market_params['rent'])
+            new_salary = c6.number_input("Owner Salary", value=st.session_state.market_params['owner_salary'])
+            new_tax = c7.number_input("Tax Rate (%)", value=st.session_state.market_params['tax_rate'])
+            new_int = c8.number_input("Interest Rate (%)", value=st.session_state.market_params['interest_rate'])
 
-    # 2. ตารางคะแนนรวม (Leaderboard)
-    st.subheader("📊 อันดับคะแนนปัจจุบัน")
-    
-    leaderboard_data = []
-    for t_name, t_data in st.session_state.players.items():
-        # เอาข้อมูลล่าสุดมาโชว์
-        last_profit = 0
-        if t_data['history']:
-            last_profit = t_data['history'][-1]['Net Profit']
-        
-        leaderboard_data.append({
-            "Team": t_name,
-            "Current Period": t_data['period'],
-            "Cash in Hand": t_data['financials']['cash'],
-            "Last Net Profit": last_profit,
-            "Rx Stock": t_data['financials']['inv_rx'],
-            "OTC Stock": t_data['financials']['inv_otc']
-        })
-        
-    df_leader = pd.DataFrame(leaderboard_data)
-    # จัดเรียงตามเงินสด (Cash)
-    df_leader = df_leader.sort_values(by="Cash in Hand", ascending=False).reset_index(drop=True)
-    
-    # ไฮไลท์สีทีมที่รวยสุด
-    st.dataframe(df_leader.style.background_gradient(subset=['Cash in Hand'], cmap='Greens'))
-    
-    st.caption("*Instructor สามารถดูภาพรวมสถานะการเงินของนักเรียนทั้ง 7 ทีมได้ที่นี่")
+            if st.form_submit_button("💾 Save All Parameters"):
+                st.session_state.market_params.update({
+                    'base_traffic': new_traffic, 'mkt_rx_fee': new_rx_fee,
+                    'mkt_wage_pharm': new_w_pharm, 'mkt_wage_clerk': new_w_clerk,
+                    'rent': new_rent, 'owner_salary': new_salary,
+                    'tax_rate': new_tax, 'interest_rate': new_int
+                })
+                st.success("อัปเดตค่าตัวแปรระบบครบถ้วนแล้ว!")
 
-elif selected_team:
-    # ----------------------------------
-    # 🎓 STUDENT PLAY AREA
-    # ----------------------------------
-    # ดึงข้อมูลเฉพาะทีมที่เลือก
-    my_data = st.session_state.players[selected_team]
-    my_fin = my_data['financials']
-    
-    st.title(f"🏥 {selected_team}: Period {my_data['period']}")
-    
-    # Dashboard ส่วนตัว
-    c1, c2, c3 = st.columns(3)
-    c1.metric("My Cash", f"${my_fin['cash']:,.2f}")
-    c2.metric("Rx Stock", f"${my_fin['inv_rx']:,.2f}")
-    c3.metric("OTC Stock", f"${my_fin['inv_otc']:,.2f}")
-    
-    # Form ตัดสินใจ (เหมือนเดิม แต่ส่งค่า team_name ไปด้วย)
-    with st.form("decision_form"):
-        st.subheader("📝 Decisions")
-        # (ย่อโค้ด Input เพื่อความกระชับ แต่ Logic เหมือนเดิม)
-        col_A, col_B = st.columns(2)
-        with col_A:
-            in_rx_m = st.number_input("Rx Markup %", 0.0, 100.0, 25.0)
-            in_rx_f = st.number_input("Rx Fee $", 0.0, 20.0, 4.0)
-            in_otc_m = st.number_input("OTC Markup %", 0.0, 100.0, 50.0)
-            in_ads = st.number_input("Ads Budget $", 0, 10000, 500)
-        with col_B:
-            in_buy_rx = st.number_input("Buy Rx $", 0, 100000, 15000)
-            in_buy_otc = st.number_input("Buy OTC $", 0, 100000, 20000)
-            in_n_pharm = st.number_input("# Pharm", 1, 5, 1)
-            in_w_pharm = st.number_input("Wage Pharm", 10.0, 60.0, 22.0)
-        
-        # ใส่ค่า Default สำหรับตัวแปรที่เหลือเพื่อประหยัดที่หน้าจอ
-        in_n_clerk, in_w_clerk = 2, 6.50
-        in_del, in_rec = False, False
-        
-        if st.form_submit_button("🚀 Submit for THIS TEAM"):
-            decisions = {
-                'rx_markup': in_rx_m, 'rx_fee': in_rx_f, 'otc_markup': in_otc_m,
-                'ads_budget': in_ads, 'buy_rx': in_buy_rx, 'buy_otc': in_buy_otc,
-                'n_pharm': in_n_pharm, 'wage_pharm': in_w_pharm,
-                'n_clerk': in_n_clerk, 'wage_clerk': in_w_clerk,
-                'delivery': in_del, 'records': in_rec
-            }
-            # ส่งชื่อทีมเข้าไปประมวลผล
-            run_period(selected_team, decisions)
-            st.rerun()
-
-    # History ส่วนตัว
-    if my_data['history']:
-        st.divider()
-        st.subheader("📜 ประวัติการเล่นของทีมเรา")
-        st.dataframe(pd.DataFrame(my_data['history']))
-
-else:
-    st.info("กรุณาเลือกโหมดการใช้งานจากเมนูด้านซ้าย")
+    # 2. Leaderboard (Fix Bug: ไม่ใช้ style.background_gradient)
+    st.divider()
+    st.subheader("🏆 อันดับคะแนน (
