@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. System Config
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V3.1", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V3.2 (Exact Form Match)", layout="wide")
 ADMIN_PASSWORD = "admin1234"
 
 # ==========================================
@@ -13,26 +13,43 @@ ADMIN_PASSWORD = "admin1234"
 # ==========================================
 if 'players' not in st.session_state:
     st.session_state.players = {}
+    # สร้างข้อมูลเริ่มต้น 7 ทีม
     for i in range(1, 8):
         team_id = f"Team {i}"
-        # สร้าง Array เก็บค่า Input 36 ช่อง (เริ่มต้นเป็น 0)
-        default_inputs = [0.0] * 37
         
-        # Set Defaults
-        default_inputs[1] = i      # Store ID
-        default_inputs[2] = 1      # Period
-        default_inputs[4] = 3.0    # Prof Fee
-        default_inputs[5] = 50.0   # Rx Markup
-        default_inputs[6] = 45.0   # OTC Markup
+        # สร้าง List ว่าง 37 ช่อง (ใช้ Index 1-36)
+        # เพื่อให้ตรงกับ Item 1 - Item 36 ในแบบฟอร์ม
+        inputs = [0.0] * 37 
         
+        # --- กำหนดค่าเริ่มต้น (Default Values) ---
+        inputs[1] = float(i)    # Item 1: Store ID
+        inputs[2] = 1.0         # Item 2: Period
+        inputs[3] = 1.0         # Item 3: Location Code
+        inputs[4] = 3.0         # Item 4: Prof Fee
+        inputs[5] = 50.0        # Item 5: Rx Markup %
+        inputs[6] = 45.0        # Item 6: OTC Markup %
+        inputs[12] = 1.0        # Item 12: Pharmacists
+        inputs[13] = 20.0       # Item 13: Pharm Wage
+        inputs[14] = 1.0        # Item 14: Clerks
+        inputs[15] = 6.0        # Item 15: Clerk Wage
+        inputs[16] = 8000.0     # Item 16: Manager Salary
+        inputs[17] = 50.0       # Item 17: Hours Weekday
+        inputs[23] = 20000.0    # Item 23: Purchase Rx
+        inputs[24] = 10000.0    # Item 24: Purchase OTC
+        inputs[30] = 1500.0     # Item 30: Utilities
+        inputs[31] = 400.0      # Item 31: Insurance
+        inputs[32] = 200.0      # Item 32: Licenses
+
         st.session_state.players[team_id] = {
-            'shop_name': f"ร้านยา Team {i}", # ชื่อเริ่มต้น
+            'shop_name': f"ร้านยา Team {i}", 
             'status': 'Thinking',
-            'inputs': default_inputs,
+            'inputs': inputs, # เก็บค่า Item01-36 ไว้ในนี้
             'financials': {
-                'cash': 40000.0, 'inventory_rx': 20000.0, 'inventory_otc': 15000.0,
-                'accounts_payable': 0.0, 'long_term_debt': 0.0, 'emergency_loan': 0.0,
-                'last_market_share': 14.28
+                'cash': 40000.0, 
+                'inventory_rx': 20000.0, 
+                'inventory_otc': 15000.0,
+                'long_term_debt': 0.0, 
+                'emergency_loan': 0.0
             },
             'history': []
         }
@@ -47,48 +64,74 @@ def process_period():
     for t, p in st.session_state.players.items():
         if p['status'] != 'Submitted': continue
         
+        # ดึงค่า Input ออกมาเป็นตัวแปร (unpack) เพื่อความชัดเจนในการคำนวณ
         inp = p['inputs']
         fin = p['financials']
         
-        # --- Mapping Inputs ---
-        rx_markup = inp[5] if inp[5] > 0 else 50
+        # --- 1. MAPPING VARIABLES (ให้ตรงกับ Logic คู่มือ) ---
+        item05_rx_markup = inp[5]
+        item06_otc_markup = inp[6]
+        
+        # Service Score (Item 8,9,10,11)
         service_score = inp[8] + inp[9] + inp[10] + inp[11]
+        
+        # Total Promo (Item 19,20,21,22)
         total_promo = inp[19] + inp[20] + inp[21] + inp[22]
         
-        # --- Simplified Calculation Model ---
+        # Wages Calculation
+        # (Pharmacists * Wage) + (Clerks * Wage) * Hours * 13 weeks
+        weekly_hours = inp[17] # Item 17
+        wage_cost = ((inp[12] * inp[13]) + (inp[14] * inp[15])) * weekly_hours * 13
+        
+        # --- 2. SALES CALCULATION ---
+        # Logic อย่างง่าย: ถ้าราคาถูก + โปรเยอะ + บริการดี = ขายดี
         base_sales = 50000 
-        price_factor = (50 / rx_markup) * 1.1
+        price_factor = (50 / item05_rx_markup) * 1.05 if item05_rx_markup > 0 else 0
         promo_factor = 1 + (total_promo / 5000)
         service_factor = 1 + (service_score * 0.05)
         
-        total_rev = base_sales * price_factor * promo_factor * service_factor
+        total_revenue = base_sales * price_factor * promo_factor * service_factor
         
-        # Expenses & COGS
-        cogs = total_rev * 0.65
-        wages = (inp[12]*inp[13] + inp[14]*inp[15]) * 50 * 13 # Approx wage cost
-        other_expenses = sum(inp[29:37]) # Fixed costs user entered
+        # --- 3. EXPENSES (P&L) ---
+        cogs = total_revenue * 0.65 # ต้นทุนสินค้าขายประมาณ 65%
         
-        total_exp = wages + other_expenses + total_promo
-        net_profit = (total_rev - cogs) - total_exp
+        # รวมค่าใช้จ่ายดำเนินงาน (Item 29 - 36) ที่ผู้เล่นกรอกมา
+        operating_fixed_costs = sum(inp[29:37]) # Sum Item 29 to 36
         
-        # Cash Flow
-        cash_in = total_rev
-        cash_out = total_exp + inp[23] + inp[24] + inp[25] + inp[26]
+        total_expenses = wage_cost + inp[16] + operating_fixed_costs + total_promo
         
-        fin['cash'] += (cash_in - cash_out)
+        # Net Profit
+        net_profit = (total_revenue - cogs) - total_expenses
+        
+        # --- 4. CASH FLOW ---
+        # Cash In
+        cash_in = total_revenue
+        
+        # Cash Out (Expenses + Purchases + Debt Payments)
+        # Note: Wages & Fixed Costs are paid in cash
+        cash_out_expenses = total_expenses # สมมติจ่ายสดทั้งหมด
+        cash_out_purchases = inp[23] + inp[24] # Item 23, 24
+        cash_out_debt = inp[25] + inp[26]      # Item 25 (AP), 26 (Notes)
+        
+        total_cash_out = cash_out_expenses + cash_out_purchases + cash_out_debt
+        
+        fin['cash'] += (cash_in - total_cash_out)
         
         # Emergency Loan Check
         if fin['cash'] < 0:
-            loan = abs(fin['cash']) + 1000
-            fin['emergency_loan'] += loan
-            fin['cash'] += loan
-            
+            loan_needed = abs(fin['cash']) + 1000
+            fin['emergency_loan'] += loan_needed
+            fin['cash'] += loan_needed
+        
+        # --- 5. UPDATE HISTORY ---
         p['history'].append({
             "Period": st.session_state.global_period,
-            "Sales": total_rev,
+            "Sales": total_revenue,
             "Net Profit": net_profit,
             "Cash": fin['cash']
         })
+        
+        # Reset Status
         p['status'] = 'Thinking'
         p['period'] += 1
 
@@ -97,24 +140,16 @@ def process_period():
 # ==========================================
 # 4. User Interface
 # ==========================================
-
-# ฟังก์ชันช่วยแสดงชื่อใน Dropdown
 def format_team_name(team_id):
     shop_name = st.session_state.players[team_id].get('shop_name', team_id)
     return f"{shop_name} ({team_id})"
 
 with st.sidebar:
-    st.title("💊 Communi-Pharm V3.1")
+    st.title("💊 Communi-Pharm V3.2")
     role = st.selectbox("Login Role", ["Student", "Instructor"])
     
     if role == "Student":
-        # --- [จุดที่แก้ไข] Dropdown แสดงชื่อร้าน ---
-        # ใช้ format_func เพื่อแปลง Key (Team 1) ให้โชว์เป็นชื่อร้าน
-        team = st.selectbox(
-            "เลือกทีมของคุณ (Select Team)", 
-            options=list(st.session_state.players.keys()),
-            format_func=format_team_name
-        )
+        team = st.selectbox("Select Team", options=list(st.session_state.players.keys()), format_func=format_team_name)
     else:
         pwd = st.text_input("Admin Password", type="password")
         is_admin = (pwd == ADMIN_PASSWORD)
@@ -122,123 +157,169 @@ with st.sidebar:
 if role == "Student":
     p = st.session_state.players[team]
     
-    # --- Sidebar ตั้งชื่อร้าน ---
+    # --- Sidebar: Shop Name ---
     with st.sidebar:
         st.markdown("---")
-        st.subheader("🏷️ ตั้งชื่อร้าน (Shop Name)")
-        new_name = st.text_input("ชื่อร้าน:", value=p['shop_name'])
-        if st.button("บันทึกชื่อ"):
+        st.subheader("🏷️ Shop Identity")
+        new_name = st.text_input("Shop Name", value=p['shop_name'])
+        if st.button("Save Name"):
             p['shop_name'] = new_name
-            st.success("เปลี่ยนชื่อเรียบร้อย!")
             st.rerun()
 
-    # --- Main Dashboard ---
+    # --- Dashboard ---
     st.title(f"🏥 {p['shop_name']}")
-    st.caption(f"Team ID: {team} | Period: {st.session_state.global_period}")
+    st.caption(f"Team: {team} | Current Period: {st.session_state.global_period}")
     
-    # Show Last Period Stats
     if p['history']:
         last = p['history'][-1]
         c1, c2, c3 = st.columns(3)
-        c1.metric("ยอดขาย (Sales)", f"${last['Sales']:,.0f}")
-        c2.metric("กำไรสุทธิ (Net Profit)", f"${last['Net Profit']:,.0f}")
-        c3.metric("เงินสด (Cash)", f"${last['Cash']:,.0f}")
+        c1.metric("Total Sales", f"${last['Sales']:,.0f}")
+        c2.metric("Net Profit", f"${last['Net Profit']:,.0f}")
+        c3.metric("Cash Balance", f"${last['Cash']:,.0f}")
 
     if p['status'] == 'Submitted':
-        st.info("✅ ส่งข้อมูลเรียบร้อยแล้ว รออาจารย์ประมวลผล")
-        if st.button("แก้ไขข้อมูล"):
-            p['status'] = 'Thinking'
-            st.rerun()
+        st.success("✅ Input Submitted. Waiting for processing.")
+        if st.button("Edit Inputs"):
+            p['status'] = 'Thinking'; st.rerun()
     else:
-        with st.form("input_36_form"):
-            st.subheader("📝 แบบฟอร์มตัดสินใจ (36 ข้อ)")
+        # ==========================================
+        # FORM INPUT: EXACT MATCH WITH MANUAL
+        # ==========================================
+        with st.form("decision_form_36_items"):
+            st.subheader("📝 Decision Input Form (36 Items)")
+            st.info("กรุณากรอกข้อมูลให้ตรงกับใบส่งคำตอบ (Item 1 - 36)")
             
-            # Layout 3 Columns
+            # โหลดค่าเดิมจาก Memory
+            saved = p['inputs'] 
+            
+            # แบ่ง 3 คอลัมน์เหมือนหน้ากระดาษ
             col1, col2, col3 = st.columns(3)
             
+            # --- COLUMN 1: Items 1 - 12 ---
             with col1:
-                st.markdown("##### 1. ข้อมูลทั่วไป & นโยบาย")
-                val_01 = st.number_input("01. รหัสร้าน", value=int(p['inputs'][1]))
-                val_02 = st.number_input("02. งวดที่", value=st.session_state.global_period, disabled=True)
-                val_03 = st.number_input("03. รหัสทำเล", value=int(p['inputs'][3]))
-                val_04 = st.number_input("04. ค่าวิชาชีพ ($)", value=p['inputs'][4])
-                val_05 = st.number_input("05. Rx Markup (%)", value=p['inputs'][5])
-                val_06 = st.number_input("06. OTC Markup (%)", value=p['inputs'][6])
-                val_07 = st.number_input("07. ส่วนลดพิเศษ (%)", value=p['inputs'][7])
-                st.markdown("**บริการ (1=มี, 0=ไม่มี)**")
-                val_08 = st.number_input("08. ส่งของ", 0, 1, int(p['inputs'][8]))
-                val_09 = st.number_input("09. ประวัติผู้ป่วย", 0, 1, int(p['inputs'][9]))
-                val_10 = st.number_input("10. ให้เครดิต", 0, 1, int(p['inputs'][10]))
-                val_11 = st.number_input("11. ให้คำปรึกษา", 0, 1, int(p['inputs'][11]))
-                val_12 = st.number_input("12. จำนวนเภสัชกร", value=p['inputs'][12])
-
-            with col2:
-                st.markdown("##### 2. ดำเนินงาน & การตลาด")
-                val_13 = st.number_input("13. ค่าแรงเภสัช ($/hr)", value=p['inputs'][13])
-                val_14 = st.number_input("14. จำนวนผู้ช่วย", value=p['inputs'][14])
-                val_15 = st.number_input("15. ค่าแรงผู้ช่วย ($/hr)", value=p['inputs'][15])
-                val_16 = st.number_input("16. เงินเดือน ผจก.", value=8000.0)
-                val_17 = st.number_input("17. เปิดร้าน (วันธรรมดา)", value=p['inputs'][17])
-                val_18 = st.number_input("18. เปิดร้าน (วันอาทิตย์)", value=p['inputs'][18])
-                st.markdown("**งบโฆษณา ($)**")
-                val_19 = st.number_input("19. นสพ.", value=p['inputs'][19])
-                val_20 = st.number_input("20. วิทยุ", value=p['inputs'][20])
-                val_21 = st.number_input("21. ทีวี", value=p['inputs'][21])
-                val_22 = st.number_input("22. ไปรษณีย์", value=p['inputs'][22])
-                st.markdown("---")
-                val_23 = st.number_input("23. ซื้อยา Rx ($)", value=p['inputs'][23])
-                val_24 = st.number_input("24. ซื้อยา OTC ($)", value=p['inputs'][24])
-
-            with col3:
-                st.markdown("##### 3. การเงิน & ค่าใช้จ่าย")
-                val_25 = st.number_input("25. จ่ายเจ้าหนี้ ($)", value=p['inputs'][25])
-                val_26 = st.number_input("26. จ่ายเงินกู้ ($)", value=p['inputs'][26])
-                val_27 = st.number_input("27. กู้เพิ่ม ($)", value=p['inputs'][27])
-                val_28 = st.number_input("28. จ่ายปันผล ($)", value=p['inputs'][28])
-                st.markdown("**ค่าใช้จ่ายดำเนินงาน (กรอกตามจริง)**")
-                val_29 = st.number_input("29. ค่าเช่า", value=p['inputs'][29])
-                val_30 = st.number_input("30. ค่าน้ำไฟ", value=1500.0)
-                val_31 = st.number_input("31. ค่าประกัน", value=400.0)
-                val_32 = st.number_input("32. ค่าใบอนุญาต", value=200.0)
-                val_33 = st.number_input("33. ค่าซ่อมแซม", value=p['inputs'][33])
-                val_34 = st.number_input("34. วัสดุสิ้นเปลือง", value=p['inputs'][34])
-                val_35 = st.number_input("35. ค่าบัญชี/กม.", value=p['inputs'][35])
-                val_36 = st.number_input("36. อื่นๆ", value=p['inputs'][36])
-
-            if st.form_submit_button("✅ ยืนยันข้อมูล (Submit)"):
-                # Save data back to array
-                new_inputs = [0.0]*37
-                # Map inputs
-                new_inputs[1]=val_01; new_inputs[3]=val_03; new_inputs[4]=val_04; new_inputs[5]=val_05
-                new_inputs[6]=val_06; new_inputs[7]=val_07; new_inputs[8]=val_08; new_inputs[9]=val_09
-                new_inputs[10]=val_10; new_inputs[11]=val_11; new_inputs[12]=val_12; new_inputs[13]=val_13
-                new_inputs[14]=val_14; new_inputs[15]=val_15; new_inputs[16]=val_16; new_inputs[17]=val_17
-                new_inputs[18]=val_18; new_inputs[19]=val_19; new_inputs[20]=val_20; new_inputs[21]=val_21
-                new_inputs[22]=val_22; new_inputs[23]=val_23; new_inputs[24]=val_24; new_inputs[25]=val_25
-                new_inputs[26]=val_26; new_inputs[27]=val_27; new_inputs[28]=val_28; new_inputs[29]=val_29
-                new_inputs[30]=val_30; new_inputs[31]=val_31; new_inputs[32]=val_32; new_inputs[33]=val_33
-                new_inputs[34]=val_34; new_inputs[35]=val_35; new_inputs[36]=val_36
+                st.markdown("### Section 1")
+                item01_store_id = st.number_input("Item 1: Store ID", value=int(saved[1]), disabled=True)
+                item02_period   = st.number_input("Item 2: Period", value=st.session_state.global_period, disabled=True)
+                item03_location = st.number_input("Item 3: Location Code", value=int(saved[3]))
+                item04_prof_fee = st.number_input("Item 4: Prof Fee ($)", value=saved[4])
+                item05_rx_markup= st.number_input("Item 5: Rx Markup (%)", value=saved[5])
+                item06_otc_mark = st.number_input("Item 6: OTC Markup (%)", value=saved[6])
+                item07_discount = st.number_input("Item 7: Special Disc (%)", value=saved[7])
                 
+                st.markdown("---")
+                st.caption("Service Policy (0=No, 1=Yes)")
+                item08_delivery = st.number_input("Item 8: Delivery", 0, 1, int(saved[8]))
+                item09_records  = st.number_input("Item 9: Patient Records", 0, 1, int(saved[9]))
+                item10_charge   = st.number_input("Item 10: Charge Acct", 0, 1, int(saved[10]))
+                item11_consult  = st.number_input("Item 11: Consulting", 0, 1, int(saved[11]))
+                item12_n_pharm  = st.number_input("Item 12: No. Pharmacists", value=saved[12])
+
+            # --- COLUMN 2: Items 13 - 24 ---
+            with col2:
+                st.markdown("### Section 2")
+                item13_w_pharm  = st.number_input("Item 13: Pharm Wage ($)", value=saved[13])
+                item14_n_clerk  = st.number_input("Item 14: No. Clerks", value=saved[14])
+                item15_w_clerk  = st.number_input("Item 15: Clerk Wage ($)", value=saved[15])
+                item16_mgr_sal  = st.number_input("Item 16: Manager Salary", value=saved[16])
+                item17_hrs_wk   = st.number_input("Item 17: Hours (Week)", value=saved[17])
+                item18_hrs_sun  = st.number_input("Item 18: Hours (Sun)", value=saved[18])
+                
+                st.markdown("---")
+                st.caption("Advertising ($)")
+                item19_ads_news = st.number_input("Item 19: Newspaper", value=saved[19])
+                item20_ads_rad  = st.number_input("Item 20: Radio", value=saved[20])
+                item21_ads_tv   = st.number_input("Item 21: TV", value=saved[21])
+                item22_ads_mail = st.number_input("Item 22: Direct Mail", value=saved[22])
+                
+                st.markdown("---")
+                item23_buy_rx   = st.number_input("Item 23: Purchase Rx ($)", value=saved[23])
+                item24_buy_otc  = st.number_input("Item 24: Purchase OTC ($)", value=saved[24])
+
+            # --- COLUMN 3: Items 25 - 36 ---
+            with col3:
+                st.markdown("### Section 3")
+                item25_pay_ap   = st.number_input("Item 25: Pay A/P ($)", value=saved[25])
+                item26_pay_note = st.number_input("Item 26: Pay Notes ($)", value=saved[26])
+                item27_new_note = st.number_input("Item 27: New Note ($)", value=saved[27])
+                item28_div      = st.number_input("Item 28: Dividends ($)", value=saved[28])
+                
+                st.markdown("---")
+                st.caption("Operating Expenses (Fill from Report)")
+                item29_rent     = st.number_input("Item 29: Rent", value=saved[29])
+                item30_util     = st.number_input("Item 30: Utilities", value=saved[30])
+                item31_ins      = st.number_input("Item 31: Insurance", value=saved[31])
+                item32_lic      = st.number_input("Item 32: Taxes/License", value=saved[32])
+                item33_repair   = st.number_input("Item 33: Repairs", value=saved[33])
+                item34_supply   = st.number_input("Item 34: Supplies", value=saved[34])
+                item35_acct     = st.number_input("Item 35: Acct/Legal", value=saved[35])
+                item36_other    = st.number_input("Item 36: Other Exp", value=saved[36])
+
+            submitted = st.form_submit_button("✅ Submit Decisions (ส่งคำตอบ)")
+            
+            if submitted:
+                # สร้าง List ใหม่เพื่อบันทึกกลับ (Map ตัวแปรเข้า Array Index)
+                new_inputs = [0.0] * 37
+                
+                # Assign values back to specific indexes
+                new_inputs[1] = item01_store_id
+                new_inputs[2] = item02_period
+                new_inputs[3] = item03_location
+                new_inputs[4] = item04_prof_fee
+                new_inputs[5] = item05_rx_markup
+                new_inputs[6] = item06_otc_mark
+                new_inputs[7] = item07_discount
+                new_inputs[8] = item08_delivery
+                new_inputs[9] = item09_records
+                new_inputs[10] = item10_charge
+                new_inputs[11] = item11_consult
+                new_inputs[12] = item12_n_pharm
+                new_inputs[13] = item13_w_pharm
+                new_inputs[14] = item14_n_clerk
+                new_inputs[15] = item15_w_clerk
+                new_inputs[16] = item16_mgr_sal
+                new_inputs[17] = item17_hrs_wk
+                new_inputs[18] = item18_hrs_sun
+                new_inputs[19] = item19_ads_news
+                new_inputs[20] = item20_ads_rad
+                new_inputs[21] = item21_ads_tv
+                new_inputs[22] = item22_ads_mail
+                new_inputs[23] = item23_buy_rx
+                new_inputs[24] = item24_buy_otc
+                new_inputs[25] = item25_pay_ap
+                new_inputs[26] = item26_pay_note
+                new_inputs[27] = item27_new_note
+                new_inputs[28] = item28_div
+                new_inputs[29] = item29_rent
+                new_inputs[30] = item30_util
+                new_inputs[31] = item31_ins
+                new_inputs[32] = item32_lic
+                new_inputs[33] = item33_repair
+                new_inputs[34] = item34_supply
+                new_inputs[35] = item35_acct
+                new_inputs[36] = item36_other
+                
+                # Save to session state
                 p['inputs'] = new_inputs
                 p['status'] = 'Submitted'
                 st.rerun()
 
 elif role == "Instructor" and is_admin:
-    st.title("👨‍🏫 Instructor Control")
+    st.title("👨‍🏫 Instructor Control Center")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.subheader("Player Status")
+        status_data = []
+        for t, p in st.session_state.players.items():
+            status_data.append({
+                "Team": t,
+                "Shop Name": p['shop_name'],
+                "Status": "✅ READY" if p['status'] == 'Submitted' else "⏳ Thinking",
+                "Cash": f"${p['financials']['cash']:,.0f}"
+            })
+        st.dataframe(pd.DataFrame(status_data), hide_index=True)
     
-    # Status Table
-    st.subheader("สถานะผู้เล่น")
-    status_rows = []
-    for t_id, p in st.session_state.players.items():
-        status_rows.append({
-            "Team ID": t_id,
-            "Shop Name": p['shop_name'],
-            "Status": "✅ ส่งแล้ว" if p['status']=='Submitted' else "⏳ กำลังคิด",
-            "Cash": f"${p['financials']['cash']:,.0f}"
-        })
-    st.dataframe(pd.DataFrame(status_rows), hide_index=True)
-
-    if st.button("🚀 ประมวลผลรอบนี้ (Run Period)"):
-        process_period()
-        st.success("ประมวลผลเสร็จสิ้น!")
-        st.rerun()
+    with col2:
+        if st.button("🚀 PROCESS PERIOD", type="primary"):
+            process_period()
+            st.success("Simulation Computed!")
+            st.rerun()
