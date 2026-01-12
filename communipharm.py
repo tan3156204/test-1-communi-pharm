@@ -5,33 +5,34 @@ import numpy as np
 # ==========================================
 # 1. System Config
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm (Advanced)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm (Exact Terms)", layout="wide")
 
-# รหัสผ่านอาจารย์ (แก้ได้ตรงนี้)
+# รหัสผ่านอาจารย์
 ADMIN_PASSWORD = "admin1234"
 
 # ตัวเลือกทำเล
 LOCATIONS = ["Med Center", "Neighborhood", "Shopping"]
 
-# Instructor Weights (ค่าเริ่มต้น)
+# Instructor Weights (ปรับชื่อตัวแปรให้ตรงกับ DOSBox)
+# ค่า Default สมมติขึ้นมาเพื่อให้แต่ละทำเลมีความแตกต่างกัน
 DEFAULT_WEIGHTS = {
     "Med Center": {
-        "price_sensitivity": 3, "promotion_impact": 2, "hours_importance": 8,
-        "service_delivery": 9, "service_records": 9, "credit_policy": 5,
-        "inventory_level": 8, "market_share_momentum": 5, "service_speed": 8,
+        "past_rx_price": 4, "present_rx_price": 5, "promotion_index": 3,
+        "hours": 7, "delivery": 9, "records": 9, "credit": 4,
+        "inventory": 8, "prev_market_share": 5, "rx_per_hour": 8,
         "base_traffic": 1500
     },
     "Neighborhood": {
-        "price_sensitivity": 5, "promotion_impact": 4, "hours_importance": 6,
-        "service_delivery": 7, "service_records": 6, "credit_policy": 6,
-        "inventory_level": 6, "market_share_momentum": 5, "service_speed": 5,
-        "base_traffic": 1000
+        "past_rx_price": 5, "present_rx_price": 6, "promotion_index": 5,
+        "hours": 5, "delivery": 6, "records": 5, "credit": 6,
+        "inventory": 6, "prev_market_share": 6, "rx_per_hour": 5,
+        "base_traffic": 1200
     },
     "Shopping": {
-        "price_sensitivity": 9, "promotion_impact": 8, "hours_importance": 5,
-        "service_delivery": 2, "service_records": 2, "credit_policy": 4,
-        "inventory_level": 5, "market_share_momentum": 5, "service_speed": 6,
-        "base_traffic": 2000
+        "past_rx_price": 8, "present_rx_price": 10, "promotion_index": 9,
+        "hours": 4, "delivery": 2, "records": 2, "credit": 3,
+        "inventory": 5, "prev_market_share": 4, "rx_per_hour": 7,
+        "base_traffic": 2200
     }
 }
 
@@ -43,11 +44,11 @@ if 'location_weights' not in st.session_state:
 
 if 'players' not in st.session_state:
     st.session_state.players = {}
-    # สร้างทีมรอไว้ แต่ยังไม่กำหนด Location (เป็น None)
+    # สร้างทีมรอไว้ (Team 1 - Team 7)
     for i in range(1, 8):
         team_name = f"Team {i}"
         st.session_state.players[team_name] = {
-            'location': None,  # <--- ยังไม่เลือกทำเล
+            'location': None,
             'period': 1,
             'financials': {
                 'cash': 40000.0,
@@ -65,26 +66,50 @@ if 'players' not in st.session_state:
 def run_period(team_name, d):
     player = st.session_state.players[team_name]
     loc_type = player['location']
-    weights = st.session_state.location_weights[loc_type]
+    # ดึงค่า Weights ที่อาจารย์ตั้งค่าไว้
+    w = st.session_state.location_weights[loc_type]
     fin = player['financials']
     
-    # --- 1. Demand Calculation ---
+    # --- 1. Demand Calculation (Using New Weights) ---
+    # Price Factor: รวมผลของ Past และ Present (ยิ่ง Weight เยอะ ยิ่ง Sensitive ต่อราคา)
+    price_sensitivity_total = (w['past_rx_price'] * 0.4) + (w['present_rx_price'] * 0.6)
     price_score = 1.0
-    if d['rx_fee'] > 5: price_score -= 0.1
-    if d['rx_markup'] > 40: price_score -= 0.1
+    # ถ้าราคาแพงกว่ามาตรฐาน จะโดนหักคะแนนตามความ Sensitive
+    if d['rx_fee'] > 5: price_score -= (price_sensitivity_total * 0.01)
+    if d['rx_markup'] > 45: price_score -= (price_sensitivity_total * 0.01)
     
+    # Service Factors
     service_score = 1.0
-    if d['delivery'] == 1: service_score += weights['service_delivery'] * 0.02
-    if d['records'] == 1: service_score += weights['service_records'] * 0.02
-    if d['credit'] == 1: service_score += weights['credit_policy'] * 0.02
+    if d['delivery'] == 1: service_score += w['delivery'] * 0.02
+    if d['records'] == 1: service_score += w['records'] * 0.02
+    if d['credit'] == 1: service_score += w['credit'] * 0.02
     
-    hours_bonus = (d['hours_open'] - 40) * (weights['hours_importance'] * 0.002)
-    multiplier = price_score * service_score * (1 + hours_bonus) * (1 + (d['promo_exp'] / 10000))
-    traffic = weights['base_traffic'] * max(0.5, multiplier)
+    # Operations Factors
+    # Hours
+    hours_bonus = (d['hours_open'] - 40) * (w['hours'] * 0.003)
+    # Speed (Rx Per Hour Weight) - จำลองว่าถ้าจ้างคนเยอะ บริการเร็ว ลูกค้าชอบ
+    speed_bonus = 0
+    if d['n_pharm'] >= 1: speed_bonus = w['rx_per_hour'] * 0.01
     
-    # --- 2. Sales ---
-    rx_cust = int(traffic * 0.3)
-    otc_cust = int(traffic * 0.7)
+    # Marketing (Promotion Index)
+    promo_effect = (d['promo_exp'] / 8000) * (w['promotion_index'] * 0.2)
+    
+    # Inventory Level Weight (ผลกระทบถ้าของขาด หรือมีของพอ)
+    # ใน Model ง่ายๆ นี้ ให้โบนัสถ้า Inventory > 10000
+    inv_bonus = 0
+    if fin['inventory_rx'] > 10000: inv_bonus = w['inventory'] * 0.01
+
+    # Total Multiplier
+    multiplier = price_score * service_score * (1 + hours_bonus + speed_bonus + promo_effect + inv_bonus)
+    
+    # Base Traffic + Momentum (Previous Market Share)
+    # Momentum ช่วยพยุงยอดขายเดิมไว้ส่วนหนึ่ง
+    momentum = w['prev_market_share'] * 10 
+    traffic = (w['base_traffic'] + momentum) * max(0.1, multiplier)
+    
+    # --- 2. Sales Processing ---
+    rx_cust = int(traffic * 0.35)
+    otc_cust = int(traffic * 0.65)
     
     rx_cost_base = 10
     rx_price = rx_cost_base * (1 + d['rx_markup']/100) + d['rx_fee']
@@ -100,6 +125,7 @@ def run_period(team_name, d):
     cost_pharm = d['n_pharm'] * d['wage_pharm'] * d['hours_open'] * 4
     cost_clerk = d['n_clerk'] * d['wage_clerk'] * d['hours_open'] * 4
     cost_manager = d['manager_salary']
+    
     benefits_cost = 0
     if d['benefit_life'] == 1: benefits_cost += 200
     if d['benefit_health'] == 1: benefits_cost += 500
@@ -113,7 +139,7 @@ def run_period(team_name, d):
     gross_profit = (rx_revenue + otc_revenue) - (rx_cogs + otc_cogs)
     net_profit = gross_profit - total_expenses
     
-    # --- 4. Cash Flow ---
+    # --- 4. Cash Flow & Balance Sheet Updates ---
     cash_in = rx_revenue + otc_revenue + d['inv_withdrawal']
     cash_out = total_expenses + d['buy_rx'] + d['buy_otc'] + d['inv_project_amt'] + d['debt_payment_long']
     
@@ -127,16 +153,17 @@ def run_period(team_name, d):
     fin['accounts_payable'] = (fin['accounts_payable'] - payable_payment) + (d['buy_rx'] + d['buy_otc']) * 0.5
     fin['long_term_debt'] -= d['debt_payment_long']
     
+    # Record History
     player['history'].append({
         "Period": player['period'],
         "Revenue": rx_revenue + otc_revenue,
         "Net Profit": net_profit,
         "Cash": fin['cash'],
-        "Rx Sales": rx_cust
+        "Rx Sales (Qty)": rx_cust
     })
     player['period'] += 1
 
-# Helper
+# Helper for Inputs
 def make_input(label, key, default, min_v=0.0, max_v=1000000.0, step=1.0):
     return st.number_input(label, min_value=float(min_v), max_value=float(max_v), value=float(default), step=step, key=key)
 
@@ -154,7 +181,6 @@ with st.sidebar:
             st.rerun()
             
     elif role == "Instructor":
-        # Password Field
         pwd = st.text_input("Enter Admin Password", type="password")
         is_admin = (pwd == ADMIN_PASSWORD)
         if not is_admin and pwd != "":
@@ -168,31 +194,57 @@ with st.sidebar:
 if role == "Instructor":
     if is_admin:
         st.title("👨‍🏫 Instructor Control Panel")
-        st.success("Access Granted")
+        st.markdown("### ⚙️ Environment Parameters (Weights)")
+        st.info("Adjust the weights below to match the 'FILE: RATINGS' screen.")
         
         tabs = st.tabs(LOCATIONS)
         for i, loc in enumerate(LOCATIONS):
             with tabs[i]:
-                st.subheader(f"Settings for {loc}")
+                st.subheader(f"Weights for: {loc}")
                 w = st.session_state.location_weights[loc]
+                
                 with st.form(f"admin_{loc}"):
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.number_input("Base Traffic", value=w['base_traffic'], key=f"bt_{loc}")
-                        st.slider("Price Sensitivity", 1, 10, w['price_sensitivity'], key=f"ps_{loc}")
-                        st.slider("Service Delivery", 1, 10, w['service_delivery'], key=f"sd_{loc}")
-                        st.slider("Service Records", 1, 10, w['service_records'], key=f"sr_{loc}")
-                        st.slider("Credit Policy", 1, 10, w['credit_policy'], key=f"cp_{loc}")
-                    with c2:
-                        st.slider("Promotion Impact", 1, 10, w['promotion_impact'], key=f"pi_{loc}")
-                        st.slider("Hours Importance", 1, 10, w['hours_importance'], key=f"hi_{loc}")
-                        st.slider("Inventory Level", 1, 10, w['inventory_level'], key=f"il_{loc}")
-                        st.slider("Market Share Momentum", 1, 10, w['market_share_momentum'], key=f"ms_{loc}")
-                        st.slider("Service Speed", 1, 10, w['service_speed'], key=f"ss_{loc}")
+                    # Base Traffic (Hidden Factor)
+                    st.number_input("Base Traffic (Customer Volume)", value=w['base_traffic'], key=f"bt_{loc}")
                     
-                    if st.form_submit_button("Update Weights"):
-                        # Save logic omitted for brevity in prototype
-                        st.success(f"Updated {loc}!")
+                    st.markdown("---")
+                    c1, c2 = st.columns(2)
+                    
+                    with c1:
+                        # Price Factors
+                        st.slider("Store's Past Rx Price", 0, 10, w['past_rx_price'], key=f"past_{loc}")
+                        st.slider("Store's Present Rx Price", 0, 10, w['present_rx_price'], key=f"pres_{loc}")
+                        
+                        # Promotion & Hours
+                        st.slider("Store's Promotion Index", 0, 10, w['promotion_index'], key=f"promo_{loc}")
+                        st.slider("Store's Hours", 0, 10, w['hours'], key=f"hours_{loc}")
+                        
+                        # Service Offers
+                        st.slider("Offers Delivery Service", 0, 10, w['delivery'], key=f"del_{loc}")
+                        
+                    with c2:
+                        # More Service Offers
+                        st.slider("Offers Patient Records", 0, 10, w['records'], key=f"rec_{loc}")
+                        st.slider("Offers Credit", 0, 10, w['credit'], key=f"cred_{loc}")
+                        
+                        # Operational Stats
+                        st.slider("Store's Inventory Level", 0, 10, w['inventory'], key=f"inv_{loc}")
+                        st.slider("Store's Previous Market Share", 0, 10, w['prev_market_share'], key=f"share_{loc}")
+                        st.slider("Store's Rx Per Hour", 0, 10, w['rx_per_hour'], key=f"speed_{loc}")
+
+                    if st.form_submit_button(f"💾 Update {loc} Weights"):
+                        st.session_state.location_weights[loc]['past_rx_price'] = st.session_state[f"past_{loc}"]
+                        st.session_state.location_weights[loc]['present_rx_price'] = st.session_state[f"pres_{loc}"]
+                        st.session_state.location_weights[loc]['promotion_index'] = st.session_state[f"promo_{loc}"]
+                        st.session_state.location_weights[loc]['hours'] = st.session_state[f"hours_{loc}"]
+                        st.session_state.location_weights[loc]['delivery'] = st.session_state[f"del_{loc}"]
+                        st.session_state.location_weights[loc]['records'] = st.session_state[f"rec_{loc}"]
+                        st.session_state.location_weights[loc]['credit'] = st.session_state[f"cred_{loc}"]
+                        st.session_state.location_weights[loc]['inventory'] = st.session_state[f"inv_{loc}"]
+                        st.session_state.location_weights[loc]['prev_market_share'] = st.session_state[f"share_{loc}"]
+                        st.session_state.location_weights[loc]['rx_per_hour'] = st.session_state[f"speed_{loc}"]
+                        st.session_state.location_weights[loc]['base_traffic'] = st.session_state[f"bt_{loc}"]
+                        st.success(f"Weights for {loc} updated successfully!")
 
         st.divider()
         st.subheader("🏆 Leaderboard")
@@ -213,38 +265,23 @@ if role == "Instructor":
 else:
     p_data = st.session_state.players[team]
     
-    # CHECK: Has the player selected a location yet?
     if p_data['location'] is None:
         st.title(f"👋 Welcome {team}!")
-        st.warning("You have not selected a location yet.")
-        st.markdown("### Please choose your starting location:")
-        
-        # Location Selection UI
+        st.warning("Please choose your starting location:")
         c1, c2 = st.columns([1, 2])
         with c1:
             selected_loc = st.radio("Available Locations:", LOCATIONS)
-            
-            # Show description of location (optional flavor text)
-            if selected_loc == "Med Center":
-                st.info("**Med Center:** High traffic, sensitive to service quality.")
-            elif selected_loc == "Neighborhood":
-                st.info("**Neighborhood:** Balanced traffic, community focused.")
-            else:
-                st.info("**Shopping:** High traffic, very price sensitive.")
-                
-            if st.button("✅ Confirm Location & Start Game"):
+            if st.button("✅ Confirm Location & Start"):
                 st.session_state.players[team]['location'] = selected_loc
                 st.rerun()
-                
     else:
-        # Playing Game (Standard 36 Inputs)
         st.title(f"🏥 {team} - Period {p_data['period']}")
         st.markdown(f"**Location:** `{p_data['location']}` | **Cash:** `${p_data['financials']['cash']:,.2f}`")
         
         with st.form("decision_form_36"):
-            st.subheader("📝 Decision Data Form (36 Inputs)")
+            st.subheader("📝 Decision Data Form")
             
-            # Group 1: Pricing & Policy
+            # Layout based on typical form groups
             with st.expander("1. Pricing & Policy", expanded=True):
                 c1, c2, c3 = st.columns(3)
                 with c1:
@@ -260,54 +297,43 @@ else:
                     v5 = st.selectbox("5. Patient Records (1=Yes)", [0, 1], index=1)
                     v6 = st.selectbox("6. Offer Credit (1=Yes)", [0, 1], index=1)
 
-            # Group 2: Operations & Promotion
             with st.expander("2. Operations & Marketing", expanded=True):
                 c1, c2, c3 = st.columns(3)
                 v7 = make_input("7. Hours Open / Week", "v7", 46)
                 v8 = make_input("8. Promo Expenditures ($)", "v8", 600)
                 v9 = make_input("9. % Promo on Rx (%)", "v9", 90)
 
-            # Group 3: Investment & Finance
-            with st.expander("3. Finance & Investment", expanded=False):
-                c1, c2 = st.columns(2)
-                with c1:
-                    v10 = make_input("10. Current Inv. ($)", "v10", 2000)
-                    v11 = make_input("11. Project Number", "v11", 3)
-                    v12 = make_input("12. Inv. Withdrawal ($)", "v12", 0)
-                    v13 = make_input("13. Withdrawal Proj #", "v13", 0)
-                    v29 = make_input("29. Pay Accounts Payable ($)", "v29", 999999) 
-                with c2:
-                    v24 = make_input("24. Mortgage Payment ($)", "v24", 898)
-                    v25 = make_input("25. Collection Agency ($)", "v25", 0)
-                    v26 = make_input("26. Min Cash Balance ($)", "v26", 1000)
-                    v30 = make_input("30. Long Term Debt Written ($)", "v30", 0)
-                    v31 = make_input("31. Long Term Debt Payment ($)", "v31", 0)
-                    v32 = make_input("32. Interest Rate Receivables", "v32", 0)
-
-            # Group 4: Purchasing
-            with st.expander("4. Inventory Purchasing", expanded=False):
+            with st.expander("3. Finance & Purchasing", expanded=False):
                 c1, c2 = st.columns(2)
                 v15 = make_input("15. Rx Purchases ($)", "v15", 40000)
                 v16 = make_input("16. Other Purchases ($)", "v16", 16000)
+                v10 = make_input("10. Current Inv. ($)", "v10", 2000)
+                v11 = make_input("11. Project Number", "v11", 3)
+                v12 = make_input("12. Inv. Withdrawal ($)", "v12", 0)
+                v13 = make_input("13. Withdrawal Proj #", "v13", 0)
+                v29 = make_input("29. Pay Accounts Payable ($)", "v29", 999999)
+                v24 = make_input("24. Mortgage Payment ($)", "v24", 898)
+                v25 = make_input("25. Collection Agency ($)", "v25", 0)
+                v26 = make_input("26. Min Cash Balance ($)", "v26", 1000)
+                v30 = make_input("30. Long Term Debt Written ($)", "v30", 0)
+                v31 = make_input("31. Long Term Debt Payment ($)", "v31", 0)
+                v32 = make_input("32. Interest Rate Receivables", "v32", 0)
                 v27 = make_input("27. Rx Returned ($)", "v27", 0)
                 v28 = make_input("28. Other Returned ($)", "v28", 0)
 
-            # Group 5: Personnel
-            with st.expander("5. Personnel & Salary", expanded=False):
+            with st.expander("4. Personnel", expanded=False):
                 c1, c2 = st.columns(2)
-                with c1:
-                    v17 = make_input("17. No. Pharmacists", "v17", 0.8, step=0.1)
-                    v18 = make_input("18. Pharm Wage ($/hr)", "v18", 21.0)
-                    v19 = make_input("19. No. Clerks", "v19", 1.2, step=0.1)
-                    v20 = make_input("20. Clerk Wage ($/hr)", "v20", 4.75)
-                with c2:
-                    v21 = make_input("21. Manager Salary ($)", "v21", 8050)
-                    v22 = make_input("22. Mgr % Time Rx", "v22", 99)
-                    v23 = make_input("23. Mgr Hours/Week", "v23", 48)
-                    v33 = st.selectbox("33. Life Insurance (1=Yes)", [0, 1], index=1)
-                    v34 = st.selectbox("34. Health Insurance (1=Yes)", [0, 1], index=1)
+                v17 = make_input("17. No. Pharmacists", "v17", 0.8, step=0.1)
+                v18 = make_input("18. Pharm Wage ($/hr)", "v18", 21.0)
+                v19 = make_input("19. No. Clerks", "v19", 1.2, step=0.1)
+                v20 = make_input("20. Clerk Wage ($/hr)", "v20", 4.75)
+                v21 = make_input("21. Manager Salary ($)", "v21", 8050)
+                v22 = make_input("22. Mgr % Time Rx", "v22", 99)
+                v23 = make_input("23. Mgr Hours/Week", "v23", 48)
+                v33 = st.selectbox("33. Life Insurance (1=Yes)", [0, 1], index=1)
+                v34 = st.selectbox("34. Health Insurance (1=Yes)", [0, 1], index=1)
 
-            if st.form_submit_button("🚀 Submit Decisions (Period End)"):
+            if st.form_submit_button("🚀 Submit Decisions"):
                 decisions = {
                     'rx_markup': v1, 'rx_fee': v2, 'copay': v3, 'delivery': v4, 'records': v5,
                     'credit': v6, 'hours_open': v7, 'promo_exp': v8, 'promo_rx_pct': v9,
@@ -321,13 +347,11 @@ else:
                     'benefit_life': v33, 'benefit_health': v34, 'participate_3rd': v35, 'hmo_bid': v36
                 }
                 run_period(team, decisions)
-                st.success("Data Submitted Successfully!")
+                st.success("Processed Period!")
                 st.rerun()
 
-        # History
         if p_data['history']:
             st.divider()
-            st.subheader("📊 Financial History")
+            st.subheader("📊 Team History")
             df_hist = pd.DataFrame(p_data['history'])
             st.dataframe(df_hist.style.format({"Revenue": "${:,.2f}", "Net Profit": "${:,.2f}", "Cash": "${:,.2f}"}))
-        
