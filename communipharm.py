@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. System Configuration & Constants
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V10.0", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V10.0 (Fixed)", layout="wide")
 
 # Password สำหรับอาจารย์
 ADMIN_PASSWORD = "admin"
@@ -76,6 +76,7 @@ def initialize_game(num_teams):
             'shop_name': f"Store {i}", 
             'location_code': 0,  # 0 = ยังไม่เลือก
             'status': 'Thinking', # Thinking, Submitted
+            'period': 1, # <--- เพิ่มบรรทัดนี้เพื่อแก้ Error ครับ
             'inputs': inputs,
             'financials': {
                 'cash': 50000.0, 'acct_receivable': 2000.0,
@@ -271,7 +272,7 @@ def process_period():
             })
             
             p['status'] = 'Thinking'
-            p['period'] += 1
+            p['period'] += 1 # <--- ตรงนี้จะไม่ error แล้วครับ
 
     st.session_state.global_period += 1
 
@@ -279,7 +280,7 @@ def process_period():
 # 4. User Interface (UI)
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V10.0")
+    st.title("💊 Communi-Pharm V10.0 (Fixed)")
     role = st.selectbox("Role", ["Student", "Instructor"])
     
     if role == "Instructor":
