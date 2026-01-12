@@ -3,42 +3,35 @@ import pandas as pd
 import numpy as np
 
 # ==========================================
-# 1. System Config (ค่าคงที่ระบบ)
+# 1. System Config (ปรับตาม Manual)
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm (Manual Exact)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm (V2.3 Dashboard)", layout="wide")
 ADMIN_PASSWORD = "admin1234"
 LOCATIONS = ["Med Center", "Neighborhood", "Shopping"]
 
-# ค่าความสำคัญ (Weights) 10 ตัวแปร (อ้างอิงหน้า 3 และ 11 ของคู่มือ)
-DEFAULT_WEIGHTS = {
+# Configuration ของแต่ละทำเล (อ้างอิง Manual หน้า Store Specs)
+# Rent Rate: Med=4.5%, Neighborhood=2.5%, Shopping=3.0%
+LOCATION_CONFIG = {
     "Med Center": {
-        "rx_price": 5,       # ราคายา (Past+Present)
-        "promotion": 3,      # การโฆษณา
-        "hours": 7,          # เวลาเปิดร้าน
-        "service": 9,        # บริการ (Delivery + Records + Credit)
-        "inventory": 8,      # ความพร้อมของสินค้า
-        "staffing": 8,       # ความรวดเร็ว (เภสัชกร)
-        "prev_share": 5,     # โมเมนตัมตลาดเก่า
-        "base_traffic": 5000 # ฐานลูกค้าในทำเล
+        "rent_rate": 0.045, 
+        "weights": {"rx_price": 3, "promotion": 2, "hours": 6, "service": 10, "inventory": 8, "staffing": 8, "prev_share": 5},
+        "base_traffic": 5000 
     },
     "Neighborhood": {
-        "rx_price": 6, "promotion": 5, "hours": 5,
-        "service": 6, "inventory": 6, "staffing": 5,
-        "prev_share": 6, "base_traffic": 3500
+        "rent_rate": 0.025,
+        "weights": {"rx_price": 9, "promotion": 7, "hours": 5, "service": 5, "inventory": 6, "staffing": 5, "prev_share": 6},
+        "base_traffic": 3500
     },
     "Shopping": {
-        "rx_price": 10, "promotion": 9, "hours": 4,
-        "service": 2, "inventory": 5, "staffing": 7,
-        "prev_share": 4, "base_traffic": 6000
+        "rent_rate": 0.030,
+        "weights": {"rx_price": 7, "promotion": 9, "hours": 4, "service": 3, "inventory": 5, "staffing": 7, "prev_share": 4},
+        "base_traffic": 6000
     }
 }
 
 # ==========================================
 # 2. State & Data
 # ==========================================
-if 'location_weights' not in st.session_state:
-    st.session_state.location_weights = DEFAULT_WEIGHTS.copy()
-
 if 'players' not in st.session_state:
     st.session_state.players = {}
     for i in range(1, 8):
@@ -54,7 +47,7 @@ if 'players' not in st.session_state:
                 'inventory_otc': 15000.0,
                 'accounts_payable': 0.0,
                 'long_term_debt': 0.0,
-                'short_term_loans': 0.0,
+                'emergency_loan': 0.0,  # เพิ่มหนี้ฉุกเฉิน
                 'last_market_share': 14.28
             },
             'history': []
@@ -64,119 +57,88 @@ if 'global_period' not in st.session_state:
     st.session_state.global_period = 1
 
 # ==========================================
-# 3. Logic Engine (Formula from Manual Page 10)
+# 3. Logic Engine (Weighted Rank + Manual Financials)
 # ==========================================
-
 def get_rank_score(series, ascending=True):
-    """
-    แปลงค่าเป็นคะแนนตามลำดับ (Rank Score)
-    - สูตร: อันดับที่ 1 (ดีสุด) ได้ N คะแนน, อันดับสุดท้ายได้ 1 คะแนน
-    - ascending=True: ค่าน้อยดี (เช่น ราคา) -> ค่าน้อยได้ Rank 1 (คะแนน N)
-    - ascending=False: ค่ามากดี (เช่น โฆษณา) -> ค่ามากได้ Rank 1 (คะแนน N)
-    """
-    # rank(method='min') ให้เลข 1, 2, 3...
     ranks = series.rank(ascending=ascending, method='min') 
-    
-    # แปลง Rank เป็น Points (ที่ 1 ได้คะแนนเยอะสุด)
-    # Points = (N_Teams + 1) - Rank
     n_teams = len(series)
+    # คะแนนเต็มเท่ากับจำนวนทีมในทำเลนั้น
     points = (n_teams + 1) - ranks
     return points
 
 def process_period():
-    # 1. แยกกลุ่มทีมตามทำเล (Market Segments)
     loc_pools = {loc: [] for loc in LOCATIONS}
     for t, data in st.session_state.players.items():
         if data['location'] and data['status'] == 'Submitted':
             loc_pools[data['location']].append(t)
 
-    # 2. คำนวณทีละตลาด
     for loc, teams in loc_pools.items():
         if not teams: continue
         
         # ดึง Config ของทำเลนั้น
-        weights = st.session_state.location_weights[loc]
-        base_traffic = weights['base_traffic']
+        config = LOCATION_CONFIG[loc]
+        weights = config['weights']
+        base_traffic = config['base_traffic']
+        rent_rate = config['rent_rate']
         
-        # เตรียม Dataframe สำหรับ Ranking
         data_rows = []
         for t in teams:
             d = st.session_state.players[t]['last_decision']
             f = st.session_state.players[t]['financials']
             
-            # คำนวณ Service Level (รวม Delivery, Records, Credit)
+            # Service Level Calculation
             service_lvl = (1 if d['delivery'] else 0) + (1 if d['records'] else 0) + (1 if d['credit'] else 0)
             
-            # คำนวณ Price Index (Rx Fee + Markup Effect)
-            # (แปลง markup เป็นตัวเงินคร่าวๆ เพื่อเทียบ: cost $10 * markup%)
+            # Price Estimation (Rx)
             estimated_price = 10 * (1 + d['rx_markup']/100) + d['rx_fee']
             
             row = {
                 'team': t,
-                'price': estimated_price,       # ยิ่งน้อยยิ่งดี
-                'promo': d['promo_exp'],        # ยิ่งมากยิ่งดี
-                'hours': d['hours_open'],       # ยิ่งมากยิ่งดี
-                'service': service_lvl,         # ยิ่งมากยิ่งดี
-                'inventory': f['inventory_rx'], # ยิ่งมากยิ่งดี
-                'staff': d['n_pharm'],          # ยิ่งมากยิ่งดี
-                'prev_share': f['last_market_share'], # ยิ่งมากยิ่งดี
-                # Wage Check: เช็คว่าจ่ายค่าแรงต่ำกว่าตลาดไหม (สมมติมาตรฐาน $20)
+                'price': estimated_price,
+                'promo': d['promo_exp'],
+                'hours': d['hours_open'],
+                'service': service_lvl,
+                'inventory': f['inventory_rx'],
+                'staff': d['n_pharm'],
+                'prev_share': f['last_market_share'],
                 'wage_rate': d['wage_pharm']
             }
             data_rows.append(row)
             
         df = pd.DataFrame(data_rows).set_index('team')
         
-        # --- กฏ Wage Penalty (จากคู่มือหน้า 17) ---
+        # Logic: Wage Penalty (ถ้าจ่ายต่ำกว่าตลาด 10% ประสิทธิภาพพนักงานลดลง)
         avg_wage = df['wage_rate'].mean()
-        # ถ้าจ่ายต่ำกว่า 90% ของค่าเฉลี่ยตลาด ให้ลดคะแนน Staff ลง 50%
-        df['staff_effective'] = df.apply(lambda x: x['staff'] * 0.5 if x['wage_rate'] < (avg_wage * 0.9) else x['staff'], axis=1)
+        df['staff_effective'] = df.apply(lambda x: x['staff'] * 0.6 if x['wage_rate'] < (avg_wage * 0.9) else x['staff'], axis=1)
 
-        # --- คำนวณคะแนนดิบ (Weighted Rank Points) ---
-        # สูตร: Sum (Rank Score * Weight)
-        
+        # Ranking Calculation (Comparative Logic)
         scores = pd.Series(0.0, index=df.index)
-        
-        # 1. Price (ค่าน้อย = Rank ดี)
         scores += get_rank_score(df['price'], ascending=True) * weights['rx_price']
-        
-        # 2. Promotion (ค่ามาก = Rank ดี)
         scores += get_rank_score(df['promo'], ascending=False) * weights['promotion']
-        
-        # 3. Hours
         scores += get_rank_score(df['hours'], ascending=False) * weights['hours']
-        
-        # 4. Service
         scores += get_rank_score(df['service'], ascending=False) * weights['service']
-        
-        # 5. Inventory
         scores += get_rank_score(df['inventory'], ascending=False) * weights['inventory']
-        
-        # 6. Staffing (ใช้ effective staff ที่หัก penalty แล้ว)
         scores += get_rank_score(df['staff_effective'], ascending=False) * weights['staffing']
-        
-        # 7. Momentum (Prev Share)
         scores += get_rank_score(df['prev_share'], ascending=False) * weights['prev_share']
 
-        # --- คำนวณ Market Share (%) ---
         total_mkt_score = scores.sum()
-        market_shares = scores / total_mkt_score # สัดส่วนคะแนนเรา / คะแนนรวม
+        market_shares = scores / total_mkt_score if total_mkt_score > 0 else 0
         
-        # --- คำนวณงบการเงิน (Financial Statements) ---
+        # Financial Calculation Loop
         for t in teams:
             player = st.session_state.players[t]
             d = player['last_decision']
             fin = player['financials']
             
             share = market_shares[t]
-            my_traffic = base_traffic * share
+            # Traffic Adjustment based on total market performance could be added here
+            my_traffic = base_traffic * share * len(teams) # Scale traffic to number of teams playing
             
-            # ยอดขาย (Rx & OTC)
             rx_units = int(my_traffic * 0.35)
             otc_units = int(my_traffic * 0.65)
             
-            # Revenue
-            rx_cost = 10.0 # สมมติทุนยาเฉลี่ย
+            # --- Revenue ---
+            rx_cost = 10.0
             rx_price = rx_cost * (1 + d['rx_markup']/100) + d['rx_fee']
             rx_rev = rx_units * rx_price
             rx_cogs = rx_units * rx_cost
@@ -190,50 +152,66 @@ def process_period():
             total_cogs = rx_cogs + otc_cogs
             gross_margin = total_rev - total_cogs
             
-            # Expenses
-            # Wages = (N * Rate * Hours * 4 weeks)
-            wages = (d['n_pharm'] * d['wage_pharm'] + d['n_clerk'] * d['wage_clerk']) * d['hours_open'] * 4
-            mgr_salary = d['manager_salary']
+            # --- Expenses ---
+            wages = (d['n_pharm'] * d['wage_pharm'] + d['n_clerk'] * d['wage_clerk']) * d['hours_open'] * 4 * 3 # 3 months/period approx? Manual says period = Quarter? Let's assume input is per month, so * 3. Or just keep logic simple per period.
+            # *Assumption*: User inputs are "Per Period" values to keep it simple.
             
-            # Fixed & Variable
-            rent = d['mortgage_payment']
-            utilities = 1000
+            wages = (d['n_pharm'] * d['wage_pharm'] + d['n_clerk'] * d['wage_clerk']) * d['hours_open'] * 13 # 13 weeks in a quarter
+            mgr_salary = d['manager_salary'] # Fixed per period
+            
+            # [LOGIC FIX] Rent is % of Sales based on Location
+            rent_exp = total_rev * rent_rate
+            
+            utilities = 1200 # Fixed estimate
             ads = d['promo_exp']
+            depreciation = 500 # Fixed straight line estimate
             
-            # Interest (ดอกเบี้ย) - คู่มือระบุให้คิด
-            interest_exp = (fin['long_term_debt'] * 0.01) # สมมติ 1% ต่อเดือน
+            interest_exp = (fin['long_term_debt'] * 0.02) + (fin['emergency_loan'] * 0.05) # Higher rate for emergency
             
-            total_exp = wages + mgr_salary + rent + utilities + ads + interest_exp
+            # [LOGIC FIX] Other Taxes (Business Tax ~1.5%)
+            other_taxes = total_rev * 0.015
             
-            net_profit = gross_margin - total_exp
+            total_exp = wages + mgr_salary + rent_exp + utilities + ads + interest_exp + depreciation + other_taxes
             
-            # Cash Flow
-            # Cash In = Sales
-            # Cash Out = Expenses + Purchases + Debt Payment
-            cash_in = total_rev
+            net_profit_before_tax = gross_margin - total_exp
+            income_tax = net_profit_before_tax * 0.20 if net_profit_before_tax > 0 else 0
+            net_profit = net_profit_before_tax - income_tax
+            
+            # --- Cash Flow & Balance Sheet Updates ---
+            cash_in = total_rev 
             purchases = d['buy_rx'] + d['buy_otc']
             debt_pay = d['payment_ap'] + d['debt_payment_long']
             
-            fin['cash'] += (cash_in - total_exp - purchases - debt_pay)
+            # Update Cash
+            current_cash = fin['cash'] + (cash_in - (total_exp - depreciation) - purchases - debt_pay)
             
-            # Update Balance Sheet
+            # [LOGIC FIX] Emergency Loan Check
+            if current_cash < 0:
+                loan_needed = abs(current_cash) + 1000 # Borrow enough to be positive
+                fin['emergency_loan'] += loan_needed
+                current_cash += loan_needed
+                player['alert'] = f"⚠️ Emergency Loan Triggered: ${loan_needed:,.0f}"
+            else:
+                player['alert'] = None
+
+            fin['cash'] = current_cash
             fin['inventory_rx'] += (d['buy_rx'] - rx_cogs)
             fin['inventory_otc'] += (d['buy_otc'] - otc_cogs)
             fin['long_term_debt'] -= d['debt_payment_long']
             fin['last_market_share'] = share * 100
             
-            # History Log
+            # Record History
             player['history'].append({
                 "Period": st.session_state.global_period,
-                "Market Share": f"{share*100:.2f}%",
-                "Customers": int(my_traffic),
-                "Revenue": total_rev,
-                "Expenses": total_exp,
+                "Market Share": share * 100,
+                "Total Sales": total_rev,
                 "Net Profit": net_profit,
-                "Cash": fin['cash']
+                "Cash": fin['cash'],
+                "Rent": rent_exp,
+                "Emergency Loan": fin['emergency_loan'],
+                "Decision": d
             })
             
-            # Reset Status
             player['status'] = 'Thinking'
             player['period'] += 1
 
@@ -246,8 +224,7 @@ def make_input(label, key, default):
 # 4. User Interface
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm")
-    st.caption("Engine: V2.2 Exact Manual Formula")
+    st.title("💊 Communi-Pharm V2.3")
     role = st.selectbox("Role", ["Student", "Instructor"])
     
     if role == "Student":
@@ -257,47 +234,76 @@ with st.sidebar:
         is_admin = (pwd == ADMIN_PASSWORD)
 
 if role == "Instructor" and is_admin:
-    st.title("👨‍🏫 Instructor Panel")
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        st.subheader("Team Status")
-        status_data = []
-        ready_cnt = 0
-        for t, p in st.session_state.players.items():
-            loc = p['location'] if p['location'] else "-"
-            sts = "✅ Submitted" if p['status'] == 'Submitted' else "⏳ Thinking"
-            if p['status'] == 'Submitted': ready_cnt += 1
-            status_data.append({"Team": t, "Location": loc, "Status": sts, "Cash": f"${p['financials']['cash']:,.0f}"})
-        st.dataframe(pd.DataFrame(status_data), hide_index=True)
-        
-    with c2:
-        st.metric("Ready", f"{ready_cnt}/7")
-        if st.button("🚀 Run Period", type="primary"):
-            process_period()
-            st.success("Simulation Processed!")
-            st.rerun()
+    st.title("👨‍🏫 Instructor Dashboard")
+    
+    tab1, tab2 = st.tabs(["⚡ Control Center", "📊 Reports"])
+    
+    with tab1:
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            st.subheader("Player Status")
+            status_data = []
+            ready_cnt = 0
+            for t, p in st.session_state.players.items():
+                loc = p['location'] if p['location'] else "-"
+                sts = "✅ Submitted" if p['status'] == 'Submitted' else "⏳ Thinking"
+                if p['status'] == 'Submitted': ready_cnt += 1
+                
+                # Check for Alert
+                alert = "🚨" if p.get('alert') else ""
+                
+                status_data.append({
+                    "Team": t, 
+                    "Location": loc, 
+                    "Status": sts + " " + alert, 
+                    "Cash": f"${p['financials']['cash']:,.0f}",
+                    "E-Loan": f"${p['financials']['emergency_loan']:,.0f}"
+                })
+            st.dataframe(pd.DataFrame(status_data), hide_index=True)
+            
+        with c2:
+            st.metric("Ready", f"{ready_cnt}/7")
+            if st.button("🚀 Run Period", type="primary"):
+                process_period()
+                st.success("Simulation Processed!")
+                st.rerun()
+
+    with tab2:
+        st.subheader("Comparative Report")
+        # (Report rendering logic remains similar but can include Rent/Tax details if needed)
+        st.write("Use the Student View to see detailed Income Statements.")
 
 elif role == "Student":
     p_data = st.session_state.players[team]
     
     if not p_data['location']:
-        st.warning("Please Select Location")
+        st.warning("Please Select Location to Start")
+        # แสดง Info ของแต่ละทำเลให้ผู้เล่นตัดสินใจ
+        st.info("**Medical Center**: High Rent (4.5%), Service Critical, Price Inelastic")
+        st.info("**Neighborhood**: Low Rent (2.5%), Price Sensitive")
+        st.info("**Shopping Center**: Moderate Rent (3.0%), High Traffic")
         loc = st.radio("Location", LOCATIONS)
-        if st.button("Confirm"):
+        if st.button("Confirm Location"):
             p_data['location'] = loc
             st.rerun()
     else:
         st.title(f"🏥 {team} ({p_data['location']})")
         
-        # History
+        # Alert Display
+        if p_data.get('alert'):
+            st.error(p_data['alert'])
+        
+        # History Table
         if p_data['history']:
             last = p_data['history'][-1]
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Market Share", last['Market Share'])
-            c2.metric("Net Profit", f"${last['Net Profit']:,.0f}")
-            c3.metric("Cash", f"${last['Cash']:,.0f}")
-            c4.metric("Customers", last['Customers'])
-            st.dataframe(pd.DataFrame(p_data['history']))
+            c1.metric("Market Share", f"{last['Market Share']:.2f}%")
+            c2.metric("Net Profit", f"${last['Net Profit']:,.0f}", delta_color="normal")
+            c3.metric("Cash Balance", f"${last['Cash']:,.0f}")
+            c4.metric("Rent Paid", f"${last['Rent']:,.0f}")
+            
+            with st.expander("📜 Income Statement (Last Period)"):
+                st.json(last) # Simplified view for debugging/checking
 
         if p_data['status'] == 'Submitted':
             st.info("Submitted. Waiting for Instructor...")
@@ -308,17 +314,19 @@ elif role == "Student":
             with st.form("decision_form"):
                 st.subheader(f"Decisions for Period {st.session_state.global_period}")
                 
-                # Group 1: Pricing
                 with st.expander("1. Pricing & Marketing", expanded=True):
                     c1, c2 = st.columns(2)
-                    v1 = c1.number_input("Rx Markup (%)", value=49.0)
+                    v1 = c1.number_input("Rx Markup (%)", value=49.0, help="Standard is ~50%")
                     v2 = c2.number_input("Rx Fee ($)", value=0.0)
                     v3 = c1.number_input("Promo Budget ($)", value=600.0)
-                    v4 = c2.checkbox("Delivery Service", True)
-                    v5 = c1.checkbox("Patient Records", True)
-                    v6 = c2.checkbox("Credit Service", True)
+                    v_otc_mark = c2.number_input("OTC Markup (%)", value=45.0)
+                    
+                    st.caption("Service Options (Affects Service Score)")
+                    col_s1, col_s2, col_s3 = st.columns(3)
+                    v4 = col_s1.checkbox("Delivery Service", True)
+                    v5 = col_s2.checkbox("Patient Records", True)
+                    v6 = col_s3.checkbox("Credit Service", True)
 
-                # Group 2: Operations
                 with st.expander("2. Operations & Staff", expanded=True):
                     c1, c2 = st.columns(2)
                     v7 = c1.number_input("Hours Open/Week", value=46.0)
@@ -326,18 +334,15 @@ elif role == "Student":
                     v18 = c1.number_input("Pharm Wage ($/hr)", value=20.0)
                     v19 = c2.number_input("Clerks (FTE)", value=1.0)
                     v20 = c1.number_input("Clerk Wage ($/hr)", value=5.0)
-                    v21 = c2.number_input("Manager Salary ($)", value=8000.0)
+                    v21 = c2.number_input("Manager Salary ($/Period)", value=8000.0)
 
-                # Group 3: Purchasing
                 with st.expander("3. Purchasing & Finance"):
                     c1, c2 = st.columns(2)
                     v15 = c1.number_input("Buy Rx Inventory ($)", value=20000.0)
                     v16 = c2.number_input("Buy OTC Inventory ($)", value=10000.0)
                     v_ap = c1.number_input("Pay Accounts Payable ($)", value=0.0)
                     v_debt = c2.number_input("Pay Long Term Debt ($)", value=0.0)
-                    # Hidden inputs
-                    v_otc_mark = 45.0
-                    v_mort = 900.0
+                    # ตัด Mortgage ออก เพราะคำนวณอัตโนมัติแล้ว
 
                 if st.form_submit_button("✅ Submit Decisions"):
                     decisions = {
@@ -346,8 +351,7 @@ elif role == "Student":
                         'hours_open': v7, 'n_pharm': v17, 'wage_pharm': v18,
                         'n_clerk': v19, 'wage_clerk': v20, 'manager_salary': v21,
                         'buy_rx': v15, 'buy_otc': v16, 'otc_markup': v_otc_mark,
-                        'payment_ap': v_ap, 'debt_payment_long': v_debt,
-                        'mortgage_payment': v_mort
+                        'payment_ap': v_ap, 'debt_payment_long': v_debt
                     }
                     p_data['last_decision'] = decisions
                     p_data['status'] = 'Submitted'
