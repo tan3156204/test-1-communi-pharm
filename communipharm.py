@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 
 # ==========================================
-# 1. System Configuration
+# 1. System Configuration & Constants
 # ==========================================
 st.set_page_config(page_title="Communi-Pharm V10.0", layout="wide")
 ADMIN_PASSWORD = "admin"
@@ -24,7 +24,7 @@ INPUT_LABELS = [
     "34. Benefits: Health Ins (0/1)", "35. Third-Party Rx (0/1)", "36. Bid for HMO Contract ($)"
 ]
 
-# Output Columns
+# Output Columns for Report
 REPORT_COLUMNS = [
     "Rank", "Store Name", "LOCATION", "Net Profit", "ROI", 
     "TOT SALES", "Rx SALES", "OTH SALES", "Rx Mkt Sh",
@@ -36,9 +36,10 @@ REPORT_COLUMNS = [
     "Current", "Acid Test", "Turnover", "ROA", "G Margin", "Debt/NW"
 ]
 
-# Location Data
+# Location Mapping
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
 
+# Default Instructor Weights
 DEFAULT_WEIGHTS = {
     "Factor": [
         "Store's Past Rx Price", "Store's Present Rx Price", "Store's Promotion Index",
@@ -62,7 +63,7 @@ def initialize_game(num_teams):
     for i in range(1, num_teams + 1):
         team_id = f"team_{i}"
         
-        # Initial Inputs
+        # Initial Inputs (Defaults from Manual)
         inputs = [0.0] * 36
         inputs[0]=50.0; inputs[1]=3.0; inputs[6]=50.0; inputs[13]=45.0
         inputs[17]=1; inputs[18]=25.0; inputs[19]=1; inputs[20]=10.0; 
@@ -70,7 +71,7 @@ def initialize_game(num_teams):
         
         st.session_state.players[team_id] = {
             'shop_name': f"Store {i}", 
-            'location_code': 0, # 0 = Not Selected Yet
+            'location_code': 0,  # 0 = Not Selected Yet
             'status': 'Thinking',
             'inputs': inputs,
             'financials': {
@@ -90,26 +91,30 @@ if 'players' not in st.session_state:
     initialize_game(5) 
 
 # ==========================================
-# 3. Logic Engine
+# 3. Simulation Logic Engine
 # ==========================================
 def calculate_demand_score(p, w_df):
-    if p['location_code'] == 0: return 1, 0 # Skip if no location
+    if p['location_code'] == 0: return 1, 0 
     
     inp = p['inputs']
     prev = p['prev_stats']
     loc_col = LOC_MAP[p['location_code']]
-    weights = w_df[loc_col] 
+    weights = w_df[loc_col]
     
     current_price = 10.0 * (1 + inp[0]/100) + inp[1]
+    
+    # 1. Price
     score_past_pr = weights["Store's Past Rx Price"] * (20 / prev['avg_price']) 
     score_pres_pr = weights["Store's Present Rx Price"] * (20 / current_price)
     
+    # 2. Service & Promo
     score_promo = weights["Store's Promotion Index"] * (inp[7] / 1000)
     score_hours = weights["Store's Hours"] * (inp[6] / 40)
     score_deliv = weights["Offers Delivery Service"] * inp[3]
     score_rec = weights["Offers Patient Records"] * inp[4]
     score_cred = weights["Offers Credit"] * inp[5]
     
+    # 3. Operational
     inv_level = (p['financials']['inventory_rx'] + p['financials']['inventory_otc']) / 10000
     score_inv = weights["Store's Inventory Level"] * inv_level
     score_share = weights["Store's Previous Market Share"] * prev['mkt_share']
@@ -121,22 +126,24 @@ def calculate_demand_score(p, w_df):
 
 def process_period():
     w_df = st.session_state.weights_df
+    
+    # Group stores by Location
     loc_scores = {1: [], 2: [], 3: []}
     
-    # 1. Calculate Scores
+    # Phase 1: Collect Scores
     for tid, p in st.session_state.players.items():
         if p['status'] != 'Submitted': continue
-        if p['location_code'] == 0: continue # Skip stores with no location
-
+        if p['location_code'] == 0: continue
+        
         score, curr_pr = calculate_demand_score(p, w_df)
         loc_scores[p['location_code']].append({'id': tid, 'score': score, 'price': curr_pr})
         
-    # 2. Distribute Sales
+    # Phase 2: Process Sales
     for loc_code, stores in loc_scores.items():
         if not stores: continue
         
         total_loc_score = sum(s['score'] for s in stores)
-        base_demand_rx = 6000 # Demand available per location type
+        base_demand_rx = 6000 # Demand per location type
         
         for s_data in stores:
             tid = s_data['id']
@@ -145,6 +152,7 @@ def process_period():
             fin = p['financials']
             
             mkt_share = (s_data['score'] / total_loc_score) if total_loc_score else 0
+            
             rx_count = base_demand_rx * mkt_share
             avg_rx_price = s_data['price']
             
@@ -152,6 +160,7 @@ def process_period():
             otc_sales = rx_sales * 0.45 * (1 + inp[13]/100)
             tot_sales = rx_sales + otc_sales
             
+            # COGS
             cost_rx = rx_sales / (1 + (inp[0]/100))
             cost_otc = otc_sales / (1 + (inp[13]/100))
             
@@ -176,8 +185,9 @@ def process_period():
             rp_ot = (hrs_open - 40) * inp[17] * inp[18] * 1.5 * 13 if hrs_open > 40 else 0
             clk_wage = inp[20] * inp[19] * hrs_open * 13
             clk_ot = (hrs_open - 40) * inp[19] * inp[20] * 1.5 * 13 if hrs_open > 40 else 0
+            
             mgr_sal = inp[21]
-            rent = inp[23] if inp[23] > 0 else 3000
+            rent = inp[23] if inp[23] > 0 else 2500
             ads = inp[7]
             depr = fin['fixed_assets'] * 0.02
             interest = fin['long_term_debt'] * 0.025
@@ -204,7 +214,7 @@ def process_period():
             curr_assets = fin['cash'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['acct_receivable']
             curr_liab = fin['acct_payable'] + fin['notes_payable']
             
-            # Save History
+            # Update History
             p['prev_stats'] = {'avg_price': avg_rx_price, 'mkt_share': mkt_share * 100, 'rx_per_hr': rx_count / (hrs_open * 13) if hrs_open else 0}
             
             p['history'].append({
@@ -265,7 +275,7 @@ with st.sidebar:
 
 # --- CONTENT ---
 if role == "Instructor" and pwd == ADMIN_PASSWORD:
-    st.title("👨‍🏫 Instructor Control")
+    st.title(f"👨‍🏫 Instructor Control (Period {st.session_state.global_period})")
     t1, t2, t3 = st.tabs(["Weights", "Run", "Report"])
     
     with t1:
@@ -289,6 +299,8 @@ if role == "Instructor" and pwd == ADMIN_PASSWORD:
             # Filter cols
             fin_cols = [c for c in REPORT_COLUMNS if c in df.columns]
             st.dataframe(df[fin_cols].style.format(precision=2))
+            
+            st.download_button("Download CSV", df[fin_cols].to_csv(), "report.csv")
         else:
             st.info("No data available")
 
@@ -318,20 +330,26 @@ elif role == "Student" and 'sel_id' in locals():
         st.info(f"📍 Location: **{LOC_MAP[p['location_code']]}** | Period: {st.session_state.global_period}")
         
         if p['status'] == 'Thinking':
+            st.write("👇 Input Decisions for this period:")
             with st.form("input"):
                 cols = st.columns(3)
                 for i in range(36):
                     with cols[i%3]:
                         if i in [3,4,5,32,33,34]: p['inputs'][i] = st.selectbox(INPUT_LABELS[i], [0,1], index=int(p['inputs'][i]))
                         else: p['inputs'][i] = st.number_input(INPUT_LABELS[i], value=float(p['inputs'][i]))
-                if st.form_submit_button("Submit"): p['status']='Submitted'; st.rerun()
+                st.markdown("---")
+                if st.form_submit_button("✅ Submit Decisions"): p['status']='Submitted'; st.rerun()
         
         elif p['status'] == 'Submitted':
-            st.success("Decisions Submitted. Waiting for Instructor.")
+            st.success("Decisions Submitted. Waiting for Instructor to Run.")
             if p['history']:
                 l = p['history'][-1]
+                st.markdown("### Last Period Results")
                 c1,c2,c3 = st.columns(3)
                 c1.metric("Sales", f"${l['TOT SALES']:,.0f}")
                 c2.metric("Profit", f"${l['Net Profit']:,.0f}")
                 c3.metric("Mkt Share", f"{l['Rx Mkt Sh']:.2f}%")
-                if st.button("Edit Next Period"): p['status']='Thinking'; st.rerun()
+                
+                st.write(f"**Current Cash:** ${st.session_state.players[sel_id]['financials']['cash']:,.2f}")
+                
+            if st.button("✏️ Edit Decision (Before Instructor Runs)"): p['status']='Thinking'; st.rerun()
