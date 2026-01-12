@@ -5,10 +5,10 @@ import numpy as np
 # ==========================================
 # 1. System Config
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm: Computer Printout", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V5.5 (Instructor Summary)", layout="wide")
 ADMIN_PASSWORD = "admin1234"
 
-# รายชื่อตัวแปร 36 ข้อ (Labels)
+# 36 Input Labels
 INPUT_LABELS = [
     "1. Prescription Markup (%)", "2. Prescription Professional Fee ($)", "3. Copayment Discount ($)",
     "4. Delivery Service (0=No, 1=Yes)", "5. Patient Records (0=No, 1=Yes)", "6. Store Offers Credit (0=No, 1=Yes)",
@@ -32,7 +32,7 @@ if 'players' not in st.session_state:
     for i in range(1, 8):
         team_id = f"Team {i}"
         inputs = [0.0] * 36
-        # Default values
+        # Defaults
         inputs[0]=50.0; inputs[1]=3.0; inputs[6]=50.0; inputs[13]=45.0
         inputs[17]=20.0; inputs[19]=6.0; inputs[20]=8000.0
         
@@ -41,14 +41,10 @@ if 'players' not in st.session_state:
             'status': 'Thinking',
             'inputs': inputs,
             'financials': {
-                'cash': 40000.0, 
-                'acct_receivable': 2000.0,
-                'inventory_rx': 20000.0, 
-                'inventory_otc': 15000.0,
-                'fixed_assets': 50000.0,
-                'acct_payable': 5000.0,
-                'notes_payable': 0.0,
-                'long_term_debt': 30000.0,
+                'cash': 40000.0, 'acct_receivable': 2000.0,
+                'inventory_rx': 20000.0, 'inventory_otc': 15000.0,
+                'fixed_assets': 50000.0, 'acct_payable': 5000.0,
+                'notes_payable': 0.0, 'long_term_debt': 30000.0,
                 'retained_earnings': 92000.0 
             },
             'history': []
@@ -58,12 +54,14 @@ if 'global_period' not in st.session_state:
     st.session_state.global_period = 1
 
 # ==========================================
-# 3. Game Engine (Simulation Logic)
+# 3. Game Engine
 # ==========================================
 def process_period():
+    # 1. Calculate for each player
+    city_total_sales = 0
+    
     for t, p in st.session_state.players.items():
         if p['status'] != 'Submitted': continue
-        
         inp = p['inputs']
         fin = p['financials']
         
@@ -72,241 +70,207 @@ def process_period():
         promo_impact = 1 + (inp[7] / 10000)
         service_impact = 1 + (sum([inp[3], inp[4], inp[5], inp[32], inp[33], inp[34]]) * 0.03)
         
-        total_sales = (45000 + 25000) * promo_impact * service_impact
+        base_sales = (45000 + 25000) * promo_impact * service_impact
+        total_sales = base_sales
         rx_sales = total_sales * 0.65
         otc_sales = total_sales * 0.35
+        
+        city_total_sales += total_sales
         
         # --- COGS ---
         cost_rx = rx_sales / (1 + (rx_markup/100))
         cost_otc = otc_sales / (1 + (inp[13]/100))
         total_cogs = cost_rx + cost_otc
         
-        # Update Inventory
         fin['inventory_rx'] += inp[14] - cost_rx
         fin['inventory_otc'] += inp[15] - cost_otc
         
-        # --- Expenses (Detailed for Report) ---
+        # --- Expenses ---
         weeks = 13; hours = inp[6]
-        # Payroll
-        pay_pharm = inp[16] * inp[17] * hours * weeks
-        pay_clerk = inp[18] * inp[19] * hours * weeks
-        pay_mgr = inp[20]
-        total_payroll = pay_pharm + pay_clerk + pay_mgr
+        payroll = (inp[16]*inp[17] + inp[18]*inp[19])*hours*weeks + inp[20]
         
-        # Ops Expenses (Simulated/Estimated)
-        exp_rent = inp[23] if inp[23] > 0 else 2500.0 # Mortgage/Rent
-        exp_util = 1200.0
-        exp_repair = 300.0
-        exp_ins = 400.0
-        exp_tax = 350.0
-        exp_legal = 500.0
+        exp_rent = inp[23] if inp[23] > 0 else 2500.0
+        # Sum estimated ops
+        other_ops = 800+300+400+350+500+400 
         exp_ads = inp[7]
         exp_depr = fin['fixed_assets'] * 0.02
-        exp_int = (fin['long_term_debt'] * 0.02) + (fin['notes_payable'] * 0.04)
-        exp_misc = 500.0
+        exp_int = (fin['long_term_debt'] * 0.02)
         
-        total_exp = total_payroll + exp_rent + exp_util + exp_repair + exp_ins + exp_tax + exp_legal + exp_ads + exp_depr + exp_int + exp_misc
+        total_exp = payroll + exp_rent + other_ops + exp_ads + exp_depr + exp_int
         
         # Profit
         gross_margin = total_sales - total_cogs
         net_profit = gross_margin - total_exp
         
-        # --- Cash Flow ---
-        cash_in = total_sales * 0.95 + inp[29] # Sales + New Loan
-        cash_out = (total_exp - exp_depr) + (inp[14]+inp[15]) + (inp[28]+inp[30]) # Exp + Buy + DebtPay
-        net_cash = cash_in - cash_out
-        
-        fin['cash'] += net_cash
+        # Cash Flow
+        cash_in = total_sales * 0.95 + inp[29]
+        cash_out = (total_exp - exp_depr) + (inp[14]+inp[15]) + (inp[28]+inp[30])
+        fin['cash'] += (cash_in - cash_out)
         fin['retained_earnings'] += net_profit
         
-        # Emergency Loan Check
         if fin['cash'] < 0:
             loan = abs(fin['cash']) + 1000
             fin['notes_payable'] += loan
             fin['cash'] += loan
+            
+        # Calc Avg Rx Price (Simulation)
+        # Assume avg Rx cost around $10 -> Price = 10 * markup + fee
+        avg_rx_price = 10.0 * (1 + rx_markup/100) + inp[1]
 
-        # --- Save Report Data (Detailed) ---
-        report = {
+        p['history'].append({
             "Period": st.session_state.global_period,
-            # Sales
-            "Sales_Rx": rx_sales, "Sales_Oth": otc_sales, "Sales_Tot": total_sales,
-            # COGS
-            "COGS_Rx": cost_rx, "COGS_Oth": cost_otc, "COGS_Tot": total_cogs,
-            "Gross_Margin": gross_margin,
-            # Expenses
-            "Exp_Payroll": total_payroll,
-            "Exp_Rent": exp_rent,
-            "Exp_Util": exp_util,
-            "Exp_Repair": exp_repair,
-            "Exp_Supplies": 200.0, # Dummy
-            "Exp_Ins": exp_ins,
-            "Exp_Tax": exp_tax,
-            "Exp_Legal": exp_legal,
-            "Exp_Ads": exp_ads,
-            "Exp_Depr": exp_depr,
-            "Exp_Int": exp_int,
-            "Exp_Misc": exp_misc,
-            "Exp_Total": total_exp,
-            "Net_Profit": net_profit,
-            # Cash Flow
-            "Cash_Beg": fin['cash'] - net_cash, # Estimate
-            "Cash_In": cash_in,
-            "Cash_Out": cash_out,
-            "Cash_End": fin['cash'],
-            # Balance Sheet
-            "BS_Cash": fin['cash'], "BS_AR": fin['acct_receivable'], 
-            "BS_Inv": fin['inventory_rx']+fin['inventory_otc'], "BS_Fixed": fin['fixed_assets'],
-            "BS_AP": fin['acct_payable'], "BS_Note": fin['notes_payable'], 
-            "BS_Long": fin['long_term_debt'], "BS_Equity": fin['retained_earnings']
-        }
-        
-        p['history'].append(report)
+            "Total Sales": total_sales,
+            "Rx Sales": rx_sales,
+            "Other Sales": otc_sales,
+            "Total COGS": total_cogs,
+            "Gross Margin": gross_margin,
+            "Total Expenses": total_exp,
+            "Net Profit": net_profit,
+            "Cash": fin['cash'],
+            "Total Assets": fin['cash'] + fin['acct_receivable'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['fixed_assets'],
+            "Net Worth": fin['retained_earnings'],
+            "Avg Rx Price": avg_rx_price
+        })
         p['status'] = 'Thinking'
         p['period'] += 1
+
+    # Update Market Share
+    for t, p in st.session_state.players.items():
+        if p['history']:
+            last = p['history'][-1]
+            share = (last['Total Sales'] / city_total_sales * 100) if city_total_sales > 0 else 0
+            last['Market Share'] = share
 
     st.session_state.global_period += 1
 
 # ==========================================
-# 4. User Interface (Printout Style)
+# 4. UI Dashboard
 # ==========================================
 def format_money(val):
     return f"{val:,.0f}"
 
 with st.sidebar:
-    st.title("💊 Communi-Pharm V5.0")
+    st.title("💊 Communi-Pharm V5.5")
     role = st.selectbox("Role", ["Student", "Instructor"])
     
     if role == "Student":
-        team = st.selectbox("Team", options=list(st.session_state.players.keys()), 
-                            format_func=lambda x: f"{st.session_state.players[x]['shop_name']} ({x})")
+        team_key = st.selectbox("Select Team", options=list(st.session_state.players.keys()))
+        p = st.session_state.players[team_key]
+        st.markdown("---")
+        new_name = st.text_input("✏️ Shop Name", value=p['shop_name'])
+        if new_name != p['shop_name']:
+            p['shop_name'] = new_name; st.rerun()
     else:
         pwd = st.text_input("Password", type="password")
         is_admin = (pwd == ADMIN_PASSWORD)
 
+# --- STUDENT VIEW (เหมือนเดิม V5.2) ---
 if role == "Student":
-    p = st.session_state.players[team]
+    p = st.session_state.players[team_key]
+    st.header(f"🏥 {p['shop_name']}")
+    st.markdown(f"**Period:** {st.session_state.global_period} | **Status:** {p['status']}")
     
-    # Header
-    st.markdown(f"## 🏥 {p['shop_name']}")
-    st.markdown(f"**PERIOD:** {st.session_state.global_period} | **STATUS:** {p['status']}")
-    
-    # === PRINTOUT SECTION ===
     if p['history']:
         last = p['history'][-1]
-        
-        # Calculate TO DATE (Cumulative)
-        # นำประวัติทั้งหมดมารวมกันเพื่อหาค่าสะสม (To Date)
         hist_df = pd.DataFrame(p['history'])
         to_date = hist_df.sum(numeric_only=True)
         
-        # ----------------------------------------------------
-        # 1. OPERATING STATEMENT (งบกำไรขาดทุน)
-        # ----------------------------------------------------
-        st.markdown("### OPERATING STATEMENT")
-        
-        # Prepare Data Rows
-        rows = [
-            ["SALES", "", ""],
-            ["  Prescription", format_money(last['Sales_Rx']), format_money(to_date['Sales_Rx'])],
-            ["  Other", format_money(last['Sales_Oth']), format_money(to_date['Sales_Oth'])],
-            ["  TOTAL SALES", format_money(last['Sales_Tot']), format_money(to_date['Sales_Tot'])],
-            ["COST OF GOODS SOLD", "", ""],
-            ["  Prescription", format_money(last['COGS_Rx']), format_money(to_date['COGS_Rx'])],
-            ["  Other", format_money(last['COGS_Oth']), format_money(to_date['COGS_Oth'])],
-            ["  TOTAL COGS", format_money(last['COGS_Tot']), format_money(to_date['COGS_Tot'])],
-            ["GROSS MARGIN", format_money(last['Gross_Margin']), format_money(to_date['Gross_Margin'])],
-            ["EXPENSES", "", ""],
-            ["  Payroll", format_money(last['Exp_Payroll']), format_money(to_date['Exp_Payroll'])],
-            ["  Rent", format_money(last['Exp_Rent']), format_money(to_date['Exp_Rent'])],
-            ["  Utilities", format_money(last['Exp_Util']), format_money(to_date['Exp_Util'])],
-            ["  Repairs", format_money(last['Exp_Repair']), format_money(to_date['Exp_Repair'])],
-            ["  Supplies", format_money(last['Exp_Supplies']), format_money(to_date['Exp_Supplies'])],
-            ["  Insurance", format_money(last['Exp_Ins']), format_money(to_date['Exp_Ins'])],
-            ["  Taxes", format_money(last['Exp_Tax']), format_money(to_date['Exp_Tax'])],
-            ["  Acct & Legal", format_money(last['Exp_Legal']), format_money(to_date['Exp_Legal'])],
-            ["  Advertising", format_money(last['Exp_Ads']), format_money(to_date['Exp_Ads'])],
-            ["  Depreciation", format_money(last['Exp_Depr']), format_money(to_date['Exp_Depr'])],
-            ["  Interest", format_money(last['Exp_Int']), format_money(to_date['Exp_Int'])],
-            ["  Miscellaneous", format_money(last['Exp_Misc']), format_money(to_date['Exp_Misc'])],
-            ["  TOTAL EXPENSES", format_money(last['Exp_Total']), format_money(to_date['Exp_Total'])],
-            ["NET PROFIT", format_money(last['Net_Profit']), format_money(to_date['Net_Profit'])]
+        st.markdown("### 📄 OPERATING STATEMENT")
+        op_data = [
+            ["**SALES**", "", ""],
+            ["Prescription", format_money(last['Rx Sales']), format_money(to_date['Rx Sales'])],
+            ["Other", format_money(last['Other Sales']), format_money(to_date['Other Sales'])],
+            ["**TOTAL SALES**", f"**{format_money(last['Total Sales'])}**", f"**{format_money(to_date['Total Sales'])}**"],
+            ["", "", ""],
+            ["**NET PROFIT**", f"**{format_money(last['Net Profit'])}**", f"**{format_money(to_date['Net Profit'])}**"]
         ]
-        
-        df_op = pd.DataFrame(rows, columns=["ITEM", "THIS PERIOD", "TO DATE"])
-        st.table(df_op) # ใช้ st.table เพื่อให้หน้าตาเหมือนกระดาษรายงานที่สุด
-
-        col_L, col_R = st.columns(2)
-        
-        # ----------------------------------------------------
-        # 2. CASH FLOW STATEMENT
-        # ----------------------------------------------------
-        with col_L:
-            st.markdown("### CASH FLOW STATEMENT")
-            cf_rows = [
-                ["Beg. Cash Balance", format_money(last['Cash_Beg'])],
-                ["Sources of Cash (In)", format_money(last['Cash_In'])],
-                ["Uses of Cash (Out)", format_money(last['Cash_Out'])],
-                ["Ending Cash Balance", format_money(last['Cash_End'])]
-            ]
-            st.table(pd.DataFrame(cf_rows, columns=["ITEM", "AMOUNT"]))
-
-        # ----------------------------------------------------
-        # 3. BALANCE SHEET
-        # ----------------------------------------------------
-        with col_R:
-            st.markdown("### BALANCE SHEET")
-            bs_rows = [
-                ["ASSETS", ""],
-                ["  Cash", format_money(last['BS_Cash'])],
-                ["  Acct Receivable", format_money(last['BS_AR'])],
-                ["  Inventory", format_money(last['BS_Inv'])],
-                ["  Fixed Assets", format_money(last['BS_Fixed'])],
-                ["TOTAL ASSETS", format_money(last['BS_Cash']+last['BS_AR']+last['BS_Inv']+last['BS_Fixed'])],
-                ["LIABILITIES", ""],
-                ["  Acct Payable", format_money(last['BS_AP'])],
-                ["  Notes Payable", format_money(last['BS_Note'])],
-                ["  Long Term Debt", format_money(last['BS_Long'])],
-                ["EQUITY (Net Worth)", format_money(last['BS_Equity'])]
-            ]
-            st.table(pd.DataFrame(bs_rows, columns=["ITEM", "AMOUNT"]))
-
-    # === INPUT SECTION ===
+        st.table(pd.DataFrame(op_data, columns=["ITEM", "THIS PERIOD", "TO DATE"]))
+    
+    # Input Form
     if p['status'] == 'Thinking':
-        st.markdown("---")
         with st.expander("📝 Decision Form (36 Items)", expanded=True):
-            with st.form("form_printout_36"):
+            with st.form("form_36"):
                 inputs = p['inputs']
                 c1, c2, c3 = st.columns(3)
-                
-                with c1:
-                    for i in range(0, 12):
-                         # Yes/No Selectbox for Items 4,5,6
-                        if i in [3, 4, 5]: 
-                            inputs[i] = st.selectbox(INPUT_LABELS[i], [0, 1], index=int(inputs[i]))
-                        else:
-                            inputs[i] = st.number_input(INPUT_LABELS[i], value=float(inputs[i]))
-                with c2:
-                    for i in range(12, 24):
-                        inputs[i] = st.number_input(INPUT_LABELS[i], value=float(inputs[i]))
-                with c3:
-                    for i in range(24, 36):
-                         # Yes/No Selectbox for Items 33,34,35
-                        if i in [32, 33, 34]:
-                            inputs[i] = st.selectbox(INPUT_LABELS[i], [0, 1], index=int(inputs[i]))
-                        else:
-                            inputs[i] = st.number_input(INPUT_LABELS[i], value=float(inputs[i]))
+                for i in range(36):
+                    col = [c1, c2, c3][i // 12]
+                    if i in [3,4,5,32,33,34]:
+                        inputs[i] = col.selectbox(INPUT_LABELS[i], [0,1], index=int(inputs[i]))
+                    else:
+                        inputs[i] = col.number_input(INPUT_LABELS[i], value=float(inputs[i]))
+                if st.form_submit_button("Submit"):
+                    p['inputs'] = inputs; p['status'] = 'Submitted'; st.rerun()
 
-                if st.form_submit_button("✅ Submit Decisions"):
-                    p['inputs'] = inputs
-                    p['status'] = 'Submitted'
-                    st.rerun()
-    elif p['status'] == 'Submitted':
-        if st.button("Edit Inputs"):
-            p['status'] = 'Thinking'; st.rerun()
-
+# --- INSTRUCTOR VIEW (NEW SUMMARY TABLE) ---
 elif role == "Instructor" and is_admin:
-    st.title("Instructor Panel")
-    if st.button("Run Simulation"):
+    st.title("👨‍🏫 INSTRUCTOR'S SUMMARY")
+    st.markdown(f"**Current Period:** {st.session_state.global_period}")
+
+    # ปุ่ม Run Process
+    if st.button("🚀 Process Period (ประมวลผลรอบปัจจุบัน)"):
         process_period()
-        st.success("Run Complete!")
+        st.success("Simulation Complete!")
         st.rerun()
+
+    st.markdown("---")
+    
+    # 1. เช็คว่ามีข้อมูล History หรือไม่
+    has_history = any(len(p['history']) > 0 for p in st.session_state.players.values())
+    
+    if has_history:
+        # เตรียมข้อมูลสำหรับตาราง Summary
+        # Rows = รายการบัญชี (Sales, Profit, etc.)
+        # Cols = ชื่อร้าน (Team 1, Team 2...)
+        
+        summary_dict = {}
+        
+        # รายการที่จะแสดงในแถว (Row Labels) - เรียงตาม PDF ตัวอย่าง
+        metrics = [
+            "Total Sales", "Rx Sales", "Other Sales",
+            "Total COGS", "Gross Margin", "Total Expenses", "Net Profit",
+            "Cash", "Total Assets", "Net Worth", "Avg Rx Price", "Market Share"
+        ]
+        
+        for team_id, p in st.session_state.players.items():
+            if p['history']:
+                last = p['history'][-1]
+                # สร้าง Column สำหรับทีมนี้
+                col_name = f"{p['shop_name']} ({team_id})"
+                
+                # ดึงค่าตาม Metrics
+                team_values = []
+                for m in metrics:
+                    val = last.get(m, 0)
+                    # Format
+                    if m == "Avg Rx Price":
+                        team_values.append(f"${val:,.2f}")
+                    elif m == "Market Share":
+                        team_values.append(f"{val:,.1f}%")
+                    else:
+                        team_values.append(f"${val:,.0f}")
+                
+                summary_dict[col_name] = team_values
+        
+        # สร้าง DataFrame
+        df_summary = pd.DataFrame(summary_dict, index=metrics)
+        
+        st.subheader(f"📊 CITY SUMMARY STATISTICS (Period {st.session_state.global_period - 1})")
+        # แสดงผลตาราง
+        st.dataframe(df_summary, use_container_width=True)
+        
+        st.markdown("""
+        **Note:** ตารางนี้แสดงผลเปรียบเทียบทุกร้านในเมือง (City) 
+        เพื่อให้เห็นยอดขายและสถานะทางการเงินเทียบกัน (เหมือนหน้า 2 ของไฟล์รายงาน)
+        """)
+
+    else:
+        st.info("ยังไม่มีข้อมูลการเล่น (No simulation data yet)")
+        
+    # Status Table (ใครส่งแล้วบ้าง)
+    st.markdown("---")
+    st.subheader("สถานะการส่งข้อมูล (Submission Status)")
+    status_data = [
+        {"Team": t, "Name": p['shop_name'], "Status": "✅ READY" if p['status']=='Submitted' else "⏳ Thinking"}
+        for t,p in st.session_state.players.items()
+    ]
+    st.dataframe(pd.DataFrame(status_data), hide_index=True)
