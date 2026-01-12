@@ -3,32 +3,50 @@ import pandas as pd
 import numpy as np
 
 # ==========================================
-# 1. System Config (Matching Manual Weights)
+# 1. System Config
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V3.4 (Legacy Comparison)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V4.0 (Exact 36 Inputs)", layout="wide")
 ADMIN_PASSWORD = "admin1234"
 
-# Configuration for Ranking Weights (Source: Instructor's Guide)
-LOCATION_CONFIG = {
-    3: { # Location 3: Medical Center
-        "name": "Medical Center",
-        "rent_rate": 0.045,
-        "base_traffic": 5000, 
-        "weights": {"price": 2, "promo": 2, "hours": 6, "service": 10, "inventory": 8, "staff": 8}
-    },
-    2: { # Location 2: Neighborhood
-        "name": "Neighborhood",
-        "rent_rate": 0.025,
-        "base_traffic": 3500,
-        "weights": {"price": 10, "promo": 7, "hours": 5, "service": 5, "inventory": 6, "staff": 5}
-    },
-    1: { # Location 1: Shopping Center
-        "name": "Shopping Center",
-        "rent_rate": 0.030,
-        "base_traffic": 6000,
-        "weights": {"price": 7, "promo": 10, "hours": 4, "service": 3, "inventory": 5, "staff": 7}
-    }
-}
+# รายชื่อตัวแปร 36 ข้อ (ตามที่คุณระบุมาเป๊ะๆ)
+INPUT_LABELS = [
+    "1. Prescription Markup (%)",
+    "2. Prescription Professional Fee ($)",
+    "3. Copayment Discount ($)",
+    "4. Delivery Service (0=No, 1=Yes)",
+    "5. Patient Records (0=No, 1=Yes)",
+    "6. Store Offers Credit (0=No, 1=Yes)",
+    "7. Hours Pharmacy Open Per Week",
+    "8. Promotional Expenditures ($)",
+    "9. % Promotion on Rx Department (%)",
+    "10. Current Period’s Investment ($)",
+    "11. Investment Project Number",
+    "12. Investment Withdrawal ($)",
+    "13. Investment Withdrawal Project Number",
+    "14. Markup on Other Store Items (%)",
+    "15. Prescription Inventory Purchases ($)",
+    "16. Other Inventory Purchases ($)",
+    "17. Number Pharmacists Employed",
+    "18. Pharmacist’s Hourly Pay Rate ($)",
+    "19. Number Sales Clerks Employed",
+    "20. Sales Clerk’s Hourly Pay Rate ($)",
+    "21. Manager’s Salary For Period ($)",
+    "22. Manager’s Percent Time Rx Dept (%)",
+    "23. Number of Hours Worked by Manager Per Week",
+    "24. Mortgage Payment ($)",
+    "25. Amount Sent to Collection Agency ($)",
+    "26. Minimum Cash Balance ($)",
+    "27. Prescription Inventory Returned ($)",
+    "28. Other Inventory Returned ($)",
+    "29. Payment on Accounts Payable ($)",
+    "30. Long Term Debt Written ($)",
+    "31. Long Term Debt Payment ($)",
+    "32. Interest Rate Charged on Accounts Receivable (%)",
+    "33. Personal Benefits: Life Insurance (1 = Yes)",
+    "34. Personal Benefits: Health Insurance (1 = Yes)",
+    "35. Participate in Third-Party Rx’s (1 = Yes)",
+    "36. Bid for HMO Contract: 0 = No bid ($)"
+]
 
 # ==========================================
 # 2. State Management
@@ -38,38 +56,29 @@ if 'players' not in st.session_state:
     for i in range(1, 8):
         team_id = f"Team {i}"
         
-        # Array 37 slots (Index 1-36 matches the Form)
-        inputs = [0.0] * 37 
+        # สร้าง Array เก็บค่า 36 ช่อง (Index 0-35)
+        # ใส่ค่า Default ไว้บางส่วนเพื่อป้องกันการคำนวณ Error ในรอบแรก
+        inputs = [0.0] * 36 
         
-        # Default Values to prevent ZeroDivisionError
-        inputs[1] = float(i)    # Store ID
-        inputs[2] = 1.0         # Period
-        inputs[3] = 2.0         # Location Code (Default = Neighborhood)
-        inputs[4] = 3.0         # Prof Fee
-        inputs[5] = 50.0        # Rx Markup
-        inputs[6] = 45.0        # OTC Markup
-        inputs[12] = 1.0        # Pharm
-        inputs[13] = 20.0       # Wage
-        inputs[14] = 1.0        # Clerk
-        inputs[15] = 6.0        # Wage
-        inputs[16] = 8000.0     # Mgr Salary
-        inputs[17] = 50.0       # Hours
-        inputs[23] = 20000.0    # Buy Rx
-        inputs[24] = 10000.0    # Buy OTC
+        # --- Set Some Reasonable Defaults (Optional) ---
+        inputs[0] = 50.0  # Rx Markup
+        inputs[1] = 3.0   # Prof Fee
+        inputs[6] = 50.0  # Hours Open
+        inputs[13] = 45.0 # Other Markup
+        inputs[17] = 20.0 # Pharm Wage
+        inputs[19] = 6.0  # Clerk Wage
+        inputs[20] = 8000.0 # Mgr Salary
         
-        # Fixed Costs Defaults
-        inputs[29] = 2000.0     # Rent (Placeholder)
-        inputs[30] = 1500.0     # Utilities
-        inputs[31] = 400.0      # Insurance
-        inputs[32] = 200.0      # Licenses
-
         st.session_state.players[team_id] = {
-            'shop_name': team_id,
+            'shop_name': f"Pharmacy {i}",
             'status': 'Thinking',
             'inputs': inputs,
             'financials': {
-                'cash': 40000.0, 'inventory_rx': 20000.0, 'inventory_otc': 15000.0,
-                'long_term_debt': 0.0, 'emergency_loan': 0.0, 'last_market_share': 14.28
+                'cash': 40000.0, 
+                'inventory_rx': 20000.0, 
+                'inventory_otc': 15000.0,
+                'investments': 0.0,
+                'emergency_loan': 0.0
             },
             'history': []
         }
@@ -78,146 +87,102 @@ if 'global_period' not in st.session_state:
     st.session_state.global_period = 1
 
 # ==========================================
-# 3. Game Engine (Weighted Ranking Logic)
+# 3. Game Engine (Mapped to New 36 Inputs)
 # ==========================================
-def get_rank_points(series, ascending=True):
-    # Rank 1 gets N points, Rank N gets 1 point
-    ranks = series.rank(ascending=ascending, method='min')
-    return (len(series) + 1) - ranks
-
 def process_period():
-    # 1. Group players by Location
-    loc_groups = {1: [], 2: [], 3: []}
     for t, p in st.session_state.players.items():
-        if p['status'] == 'Submitted':
-            loc_code = int(p['inputs'][3])
-            if loc_code in loc_groups:
-                loc_groups[loc_code].append(t)
-
-    # 2. Process each location independently
-    for loc_code, teams in loc_groups.items():
-        if not teams: continue
+        if p['status'] != 'Submitted': continue
         
-        config = LOCATION_CONFIG[loc_code]
-        w = config['weights']
+        inp = p['inputs'] # List of 36 items (Index 0 to 35)
+        fin = p['financials']
         
-        # Extract comparison data
-        data = []
-        for t in teams:
-            inp = st.session_state.players[t]['inputs']
-            
-            # Derived Variables for Ranking
-            price_est = 10 * (1 + inp[5]/100) + inp[4] # Rx Price
-            promo_tot = inp[19] + inp[20] + inp[21] + inp[22]
-            hours_tot = inp[17] + inp[18]
-            service_tot = inp[8] + inp[9] + inp[10] + inp[11]
-            inventory_tot = st.session_state.players[t]['financials']['inventory_rx'] # Opening Inv
-            staff_tot = inp[12] + (inp[14] * 0.5) # Pharm + 0.5 Clerk
-            wage_avg = (inp[13] + inp[15]) / 2
-            
-            data.append({
-                'team': t, 'price': price_est, 'promo': promo_tot,
-                'hours': hours_tot, 'service': service_tot,
-                'inventory': inventory_tot, 'staff': staff_tot,
-                'wage_avg': wage_avg
-            })
-            
-        df = pd.DataFrame(data).set_index('team')
+        # --- 1. Map Inputs to Variables (For readability) ---
+        rx_markup = inp[0]      # Item 1
+        rx_fee = inp[1]         # Item 2
+        promo_total = inp[7]    # Item 8
+        other_markup = inp[13]  # Item 14
         
-        # Wage Penalty Logic (Manual: < 90% of avg market wage => poor staff performance)
-        market_wage = df['wage_avg'].mean()
-        df['staff_effective'] = df.apply(lambda x: x['staff'] * 0.6 if x['wage_avg'] < (market_wage * 0.9) else x['staff'], axis=1)
-
-        # 3. Calculate Weighted Scores (The "Black Box" of Original Game)
-        scores = pd.Series(0.0, index=df.index)
-        scores += get_rank_points(df['price'], ascending=True) * w['price']      # Lower price is better
-        scores += get_rank_points(df['promo'], ascending=False) * w['promo']     # More promo is better
-        scores += get_rank_points(df['hours'], ascending=False) * w['hours']
-        scores += get_rank_points(df['service'], ascending=False) * w['service']
-        scores += get_rank_points(df['inventory'], ascending=False) * w['inventory']
-        scores += get_rank_points(df['staff_effective'], ascending=False) * w['staff']
+        # Service Score (Sum of Yes/No items)
+        # Delivery(4), Records(5), Credit(6), LifeIns(33), HealthIns(34), 3rdParty(35)
+        service_score = inp[3] + inp[4] + inp[5] + inp[32] + inp[33] + inp[34]
         
-        # Calculate Market Share
-        total_points = scores.sum()
-        market_shares = scores / total_points if total_points > 0 else 0
+        # --- 2. Revenue Calculation (Simulation) ---
+        # Logic: Markup ต่ำ + Promo สูง + Service ดี = ขายดี
+        base_sales = 60000 
+        price_factor = (50 / rx_markup) * 1.05 if rx_markup > 0 else 0
+        promo_factor = 1 + (promo_total / 8000)
+        service_factor = 1 + (service_score * 0.05)
         
-        # 4. Financial Calculations per Player
-        for t in teams:
-            p = st.session_state.players[t]
-            inp = p['inputs']
-            fin = p['financials']
+        total_revenue = base_sales * price_factor * promo_factor * service_factor
+        
+        # แยกยอดขาย Rx / OTC (สมมติ 60/40)
+        rx_sales = total_revenue * 0.60
+        otc_sales = total_revenue * 0.40
+        
+        # --- 3. Expenses & COGS ---
+        # COGS (Cost of Goods Sold)
+        cogs_rx = rx_sales / (1 + (rx_markup/100))
+        cogs_otc = otc_sales / (1 + (other_markup/100))
+        total_cogs = cogs_rx + cogs_otc
+        
+        # Wages
+        # Hours Open (Item 7) * Weeks (13) * Staff Count * Rate
+        weeks = 13
+        hours_open = inp[6]
+        
+        pharm_wages = inp[16] * inp[17] * hours_open * weeks
+        clerk_wages = inp[18] * inp[19] * hours_open * weeks
+        mgr_salary = inp[20] # Item 21
+        
+        total_wages = pharm_wages + clerk_wages + mgr_salary
+        
+        # Operating Expenses
+        mortgage = inp[23]  # Item 24
+        promo_exp = inp[7]  # Item 8
+        
+        # Fixed Estimate for Utilities/Other (Since removed from input list)
+        misc_overhead = 3000.0 
+        
+        total_expenses = total_wages + mortgage + promo_exp + misc_overhead
+        
+        # --- 4. Net Profit ---
+        gross_margin = total_revenue - total_cogs
+        net_profit = gross_margin - total_expenses
+        
+        # --- 5. Cash Flow Calculation ---
+        # Cash In
+        cash_in = total_revenue + inp[11] # Sales + Investment Withdrawal (Item 12)
+        
+        # Cash Out
+        # Expenses + Purchases + Investments + Debt Pay + HMO Bid
+        cash_out_ops = total_expenses
+        cash_out_purchases = inp[14] + inp[15] # Rx Buy (15) + Other Buy (16)
+        cash_out_invest = inp[9]               # Investment (10)
+        cash_out_debt = inp[28] + inp[30]      # AP (29) + Long Term (31)
+        cash_out_hmo = inp[35]                 # HMO Bid (36)
+        
+        total_cash_out = cash_out_ops + cash_out_purchases + cash_out_invest + cash_out_debt + cash_out_hmo
+        
+        # Update Balance
+        fin['cash'] += (cash_in - total_cash_out)
+        fin['investments'] += (inp[9] - inp[11]) # Net Investment
+        
+        # Check Emergency Loan
+        min_cash = inp[25] # Minimum Cash Balance (Item 26) - Desired buffer
+        if fin['cash'] < 0:
+            loan_needed = abs(fin['cash']) + 2000
+            fin['emergency_loan'] += loan_needed
+            fin['cash'] += loan_needed
             
-            share = market_shares[t]
-            
-            # Demand Calculation
-            # In original game, total market grows slightly with total promo
-            market_size = config['base_traffic'] * len(teams) * (1 + (df['promo'].sum() / 100000))
-            my_traffic = market_size * share
-            
-            rx_units = int(my_traffic * 0.35)
-            otc_units = int(my_traffic * 0.65)
-            
-            # Revenue
-            rx_cost = 10.0
-            rx_price = rx_cost * (1 + inp[5]/100) + inp[4]
-            rx_rev = rx_units * rx_price
-            rx_cogs = rx_units * rx_cost
-            
-            otc_cost = 5.0
-            otc_price = otc_cost * (1 + inp[6]/100)
-            otc_rev = otc_units * otc_price
-            otc_cogs = otc_units * otc_cost
-            
-            total_rev = rx_rev + otc_rev
-            
-            # Expenses
-            # Wage (13 weeks)
-            wages = ((inp[12]*inp[13]) + (inp[14]*inp[15])) * inp[17] * 13
-            
-            # Fixed Costs (User Inputs 29-36 are ESTIMATES, but actuals might differ in real game)
-            # Here we use logic: Rent is % of sales, others are fixed
-            rent_actual = total_rev * config['rent_rate'] # Overwrite user input for calculation
-            
-            promo_cost = inp[19] + inp[20] + inp[21] + inp[22]
-            mgr_salary = inp[16]
-            
-            # Sum other operating expenses (30-36)
-            other_ops = sum(inp[30:37])
-            
-            total_exp = wages + rent_actual + promo_cost + mgr_salary + other_ops
-            
-            # Net Profit
-            gross_margin = total_rev - (rx_cogs + otc_cogs)
-            net_profit = gross_margin - total_exp
-            
-            # Cash Flow
-            cash_in = total_rev
-            cash_out = total_exp + inp[23] + inp[24] + inp[25] + inp[26]
-            
-            fin['cash'] += (cash_in - cash_out)
-            
-            # Inventory Update
-            fin['inventory_rx'] += (inp[23] - rx_cogs)
-            fin['inventory_otc'] += (inp[24] - otc_cogs)
-            fin['last_market_share'] = share * 100
-            
-            # Emergency Loan Trigger
-            if fin['cash'] < 0:
-                needed = abs(fin['cash']) + 1000
-                fin['emergency_loan'] += needed
-                fin['cash'] += needed
-
-            # Record History
-            p['history'].append({
-                "Period": st.session_state.global_period,
-                "Market Share": share * 100,
-                "Total Sales": total_rev,
-                "Net Profit": net_profit,
-                "Cash": fin['cash'],
-                "Location": config['name']
-            })
-            p['status'] = 'Thinking'
-            p['period'] += 1
+        # History
+        p['history'].append({
+            "Period": st.session_state.global_period,
+            "Sales": total_revenue,
+            "Net Profit": net_profit,
+            "Cash": fin['cash']
+        })
+        p['status'] = 'Thinking'
+        p['period'] += 1
 
     st.session_state.global_period += 1
 
@@ -229,126 +194,75 @@ def format_team_name(team_id):
     return f"{shop_name} ({team_id})"
 
 with st.sidebar:
-    st.title("Communi-Pharm V3.4")
-    st.caption("Legacy Inputs (English) + Rank Logic")
+    st.title("💊 Communi-Pharm V4.0")
+    st.caption("Standard 36-Input Version")
     role = st.selectbox("Role", ["Student", "Instructor"])
     
     if role == "Student":
-        team = st.selectbox("Select Team", options=list(st.session_state.players.keys()), format_func=format_team_name)
+        team = st.selectbox("Team", options=list(st.session_state.players.keys()), format_func=format_team_name)
     else:
         pwd = st.text_input("Password", type="password")
         is_admin = (pwd == ADMIN_PASSWORD)
 
 if role == "Student":
     p = st.session_state.players[team]
+    st.header(f"🏥 {p['shop_name']}")
     
-    # Shop Name
-    with st.sidebar:
-        st.markdown("---")
-        new_name = st.text_input("Shop Name", value=p['shop_name'])
-        if st.button("Save Name"):
-            p['shop_name'] = new_name; st.rerun()
-
-    st.title(f"🏥 {p['shop_name']}")
-    st.caption(f"Team: {team} | Period: {st.session_state.global_period}")
-    
-    # Results Display
-    if p['history']:
-        last = p['history'][-1]
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Market Share", f"{last['Market Share']:.2f}%")
-        c2.metric("Total Sales", f"${last['Total Sales']:,.0f}")
-        c3.metric("Net Profit", f"${last['Net Profit']:,.0f}")
-        c4.metric("Cash", f"${last['Cash']:,.0f}")
-
     if p['status'] == 'Submitted':
-        st.info("✅ Input Submitted.")
-        if st.button("Edit Inputs"):
+        st.success("✅ Decisions Submitted")
+        if st.button("Edit Decisions"):
             p['status'] = 'Thinking'; st.rerun()
     else:
-        # ==========================================
-        # FORM 36 ITEMS (ENGLISH EXACT MATCH)
-        # ==========================================
-        with st.form("form_36"):
-            st.subheader("Decision Input Form (Items 1-36)")
+        with st.form("form_exact_36"):
+            st.subheader("📝 Decision Form (36 Items)")
+            st.info("Please fill in all 36 fields exactly as they appear in your manual.")
+            
             inputs = p['inputs']
             
+            # Divide into 3 logical columns for easier entry
             c1, c2, c3 = st.columns(3)
             
+            # --- Column 1: Items 1-12 ---
             with c1:
-                st.markdown("#### Section 1")
-                i01 = st.number_input("Item 01: Store ID", value=int(inputs[1]), disabled=True)
-                i02 = st.number_input("Item 02: Period", value=st.session_state.global_period, disabled=True)
-                i03 = st.number_input("Item 03: Location Code (1-3)", min_value=1, max_value=3, value=int(inputs[3]))
-                st.caption("1=Shopping, 2=Neighbor, 3=Medical")
-                i04 = st.number_input("Item 04: Prof Fee ($)", value=inputs[4])
-                i05 = st.number_input("Item 05: Rx Markup (%)", value=inputs[5])
-                i06 = st.number_input("Item 06: OTC Markup (%)", value=inputs[6])
-                i07 = st.number_input("Item 07: Special Disc (%)", value=inputs[7])
-                st.markdown("---")
-                st.caption("Service (0/1)")
-                i08 = st.number_input("Item 08: Delivery", 0, 1, int(inputs[8]))
-                i09 = st.number_input("Item 09: Patient Rec", 0, 1, int(inputs[9]))
-                i10 = st.number_input("Item 10: Charge Acct", 0, 1, int(inputs[10]))
-                i11 = st.number_input("Item 11: Consulting", 0, 1, int(inputs[11]))
-                i12 = st.number_input("Item 12: Pharmacists", value=inputs[12])
+                st.markdown("##### Section 1: Pricing & Investment")
+                for i in range(0, 12):
+                    # Checkbox logic for items 4,5,6 (Indices 3,4,5)
+                    if i in [3, 4, 5]: 
+                        val = st.selectbox(INPUT_LABELS[i], [0, 1], index=int(inputs[i]))
+                    else:
+                        val = st.number_input(INPUT_LABELS[i], value=float(inputs[i]))
+                    inputs[i] = val
 
+            # --- Column 2: Items 13-24 ---
             with c2:
-                st.markdown("#### Section 2")
-                i13 = st.number_input("Item 13: Pharm Wage", value=inputs[13])
-                i14 = st.number_input("Item 14: Clerks", value=inputs[14])
-                i15 = st.number_input("Item 15: Clerk Wage", value=inputs[15])
-                i16 = st.number_input("Item 16: Mgr Salary", value=inputs[16])
-                i17 = st.number_input("Item 17: Hours (Wk)", value=inputs[17])
-                i18 = st.number_input("Item 18: Hours (Sun)", value=inputs[18])
-                st.markdown("---")
-                st.caption("Advertising")
-                i19 = st.number_input("Item 19: Newspaper", value=inputs[19])
-                i20 = st.number_input("Item 20: Radio", value=inputs[20])
-                i21 = st.number_input("Item 21: TV", value=inputs[21])
-                i22 = st.number_input("Item 22: Direct Mail", value=inputs[22])
-                st.markdown("---")
-                i23 = st.number_input("Item 23: Buy Rx ($)", value=inputs[23])
-                i24 = st.number_input("Item 24: Buy OTC ($)", value=inputs[24])
+                st.markdown("##### Section 2: Inventory & Staff")
+                for i in range(12, 24):
+                    val = st.number_input(INPUT_LABELS[i], value=float(inputs[i]))
+                    inputs[i] = val
 
+            # --- Column 3: Items 25-36 ---
             with c3:
-                st.markdown("#### Section 3")
-                i25 = st.number_input("Item 25: Pay A/P", value=inputs[25])
-                i26 = st.number_input("Item 26: Pay Note", value=inputs[26])
-                i27 = st.number_input("Item 27: New Note", value=inputs[27])
-                i28 = st.number_input("Item 28: Dividend", value=inputs[28])
-                st.markdown("---")
-                st.caption("Operating Expenses")
-                i29 = st.number_input("Item 29: Rent", value=inputs[29])
-                i30 = st.number_input("Item 30: Utilities", value=inputs[30])
-                i31 = st.number_input("Item 31: Insurance", value=inputs[31])
-                i32 = st.number_input("Item 32: Taxes/Lic", value=inputs[32])
-                i33 = st.number_input("Item 33: Repairs", value=inputs[33])
-                i34 = st.number_input("Item 34: Supplies", value=inputs[34])
-                i35 = st.number_input("Item 35: Acct/Legal", value=inputs[35])
-                i36 = st.number_input("Item 36: Other", value=inputs[36])
+                st.markdown("##### Section 3: Finance & Benefits")
+                for i in range(24, 36):
+                    # Checkbox logic for items 33,34,35 (Indices 32,33,34)
+                    if i in [32, 33, 34]:
+                        val = st.selectbox(INPUT_LABELS[i], [0, 1], index=int(inputs[i]))
+                    else:
+                        val = st.number_input(INPUT_LABELS[i], value=float(inputs[i]))
+                    inputs[i] = val
 
-            if st.form_submit_button("Submit Decisions"):
-                ni = [0.0]*37
-                ni[1]=i01; ni[2]=i02; ni[3]=i03; ni[4]=i04; ni[5]=i05; ni[6]=i06
-                ni[7]=i07; ni[8]=i08; ni[9]=i09; ni[10]=i10; ni[11]=i11; ni[12]=i12
-                ni[13]=i13; ni[14]=i14; ni[15]=i15; ni[16]=i16; ni[17]=i17; ni[18]=i18
-                ni[19]=i19; ni[20]=i20; ni[21]=i21; ni[22]=i22; ni[23]=i23; ni[24]=i24
-                ni[25]=i25; ni[26]=i26; ni[27]=i27; ni[28]=i28; ni[29]=i29; ni[30]=i30
-                ni[31]=i31; ni[32]=i32; ni[33]=i33; ni[34]=i34; ni[35]=i35; ni[36]=i36
-                
-                p['inputs'] = ni
+            if st.form_submit_button("✅ Submit All 36 Decisions"):
+                p['inputs'] = inputs
                 p['status'] = 'Submitted'
                 st.rerun()
 
 elif role == "Instructor" and is_admin:
-    st.title("Instructor Panel")
-    if st.button("Run Simulation"):
+    st.title("👨‍🏫 Instructor Panel")
+    if st.button("Run Simulation Period"):
         process_period()
-        st.success("Processed!")
+        st.success("Period Processed!")
         st.rerun()
     
-    st.dataframe(pd.DataFrame([
-        {"Team": k, "Status": v['status'], "Cash": v['financials']['cash']} 
-        for k,v in st.session_state.players.items()
-    ]))
+    st.write("---")
+    st.write("Current Player Data:")
+    st.json(st.session_state.players)
