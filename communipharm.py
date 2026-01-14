@@ -76,7 +76,7 @@ def initialize_game(num_teams):
             'shop_name': f"Store {i}", 
             'location_code': 0,  # 0 = ยังไม่เลือก
             'status': 'Thinking', # Thinking, Submitted
-            'period': 1, # <--- เพิ่มบรรทัดนี้เพื่อแก้ Error ครับ
+            'period': 1, # <--- [FIX 1] เพิ่มบรรทัดนี้เพื่อกำหนดค่าเริ่มต้น
             'inputs': inputs,
             'financials': {
                 'cash': 50000.0, 'acct_receivable': 2000.0,
@@ -272,7 +272,10 @@ def process_period():
             })
             
             p['status'] = 'Thinking'
-            p['period'] += 1 # <--- ตรงนี้จะไม่ error แล้วครับ
+            
+            # [FIX 2] เพิ่ม Safety Check: ถ้าไม่มี period ให้เริ่มที่ 1
+            current_period = p.get('period', 1) 
+            p['period'] = current_period + 1
 
     st.session_state.global_period += 1
 
