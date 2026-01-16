@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm Simulation", layout="wide")
+st.set_page_config(page_title="Communi-Pharm Simulation V10.9", layout="wide")
 
 # CSS Styling
 st.markdown("""
@@ -16,6 +16,8 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #f0f2f6; border-radius: 5px; }
     .stTabs [aria-selected="true"] { background-color: #e6f3ff; border: 1px solid #2980b9; }
     div[data-testid="stExpander"] { border: 1px solid #ddd; border-radius: 8px; background-color: #f9f9f9; }
+    .weight-warning { color: #e74c3c; font-weight: bold; }
+    .weight-ok { color: #27ae60; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -38,23 +40,44 @@ INPUT_LABELS = [
 
 REPORT_COLUMNS = [
     "Net Profit", "TOT SALES", "Cash", "ROI", 
-    "Rx SALES", "OTH SALES", "Rx Mkt Sh", "Avg Rx Pr", 
-    "Store Hrs", "Net Worth", "Current", "Acid Test", "Turnover",
-    "G Margin", "Debt/NW", "Cash Flow"
+    "Rx SALES", "OTH SALES", "Rx Mkt Sh", "OTC Mkt Sh",
+    "Avg Rx Pr", "Store Hrs", "Net Worth", "Current", 
+    "Acid Test", "Turnover", "G Margin", "Debt/NW", "Cash Flow"
 ]
 
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
 
-DEFAULT_WEIGHTS = {
-    "Factor": [
-        "Store's Past Rx Price", "Store's Present Rx Price", "Store's Promotion Index",
-        "Store's Hours", "Offers Delivery Service", "Offers Patient Records",
-        "Offers Credit", "Store's Inventory Level", "Store's Previous Market Share",
-        "Store's RX Per Hour"
-    ],
+# --- Rx Factors (10 Variables) ---
+RX_FACTORS = [
+    "Store's Past Rx Price", "Store's Present Rx Price", "Store's Promotion Index",
+    "Store's Hours", "Offers Delivery Service", "Offers Patient Records",
+    "Offers Credit", "Store's Inventory Level", "Store's Previous Market Share",
+    "Store's RX Per Hour"
+]
+
+RX_DEFAULT_WEIGHTS = {
+    "Factor": RX_FACTORS,
     "Medical Center":    [10, 30, 5,  20, 5, 10, 5, 5, 5, 5],
     "Neighborhood":      [20, 25, 10, 10, 10, 5, 5, 5, 5, 5],
     "Shopping Center":   [40, 30, 15, 5,  0,  0, 5, 0, 5, 0]
+}
+
+# --- OTC Factors (Corrected 6 Variables) ---
+OTC_FACTORS = [
+    "Store's Previous OTC Markup",   # Input 14 (Past)
+    "Store's Present OTC Markup",    # Input 14 (Present)
+    "Store's Advertising Index",     # Input 8 (Promo)
+    "Store's Hours",                 # Input 7
+    "Store's Inventory Level",       # Total Inventory
+    "Store's Present Rx Market Share" # Result from Phase 1
+]
+
+# Default weights for OTC (Sums to 100)
+OTC_DEFAULT_WEIGHTS = {
+    "Factor": OTC_FACTORS,
+    "Medical Center":    [10, 20, 20, 10, 10, 30], # Med Center might care about Rx Share impact
+    "Neighborhood":      [20, 30, 20, 10, 10, 10], 
+    "Shopping Center":   [10, 40, 30, 10, 10, 0]   # Shopping Center cares about Price & Ads
 }
 
 # ==========================================
@@ -65,17 +88,18 @@ def start_new_game(num_teams):
     st.session_state.players = {}
     st.session_state.global_period = 2 
     st.session_state.game_active = True
-    st.session_state.weights_df = pd.DataFrame(DEFAULT_WEIGHTS).set_index("Factor")
     
-    # Loop create team ตามจำนวนที่กำหนด (1-7)
+    # Load weights into session
+    st.session_state.rx_weights_df = pd.DataFrame(RX_DEFAULT_WEIGHTS)
+    st.session_state.otc_weights_df = pd.DataFrame(OTC_DEFAULT_WEIGHTS)
+    
     for i in range(1, num_teams + 1):
         team_id = f"team_{i}"
         store_name = f"Store {i}" 
         
-        # --- Pre-fill Inputs for Validation (Store 1 only) ---
         inputs = [0.0] * 36
         if i == 1: 
-            # Store 1: ใส่ค่า Validate ตาม PDF ไว้ให้ test
+            # Store 1 Pre-filled (Based on PDF P2)
             inputs[0]=49.0; inputs[1]=1.0; inputs[2]=0.0
             inputs[3]=1.0; inputs[4]=1.0; inputs[5]=1.0
             inputs[6]=60.0; inputs[7]=1000.0; inputs[8]=60.0
@@ -89,12 +113,10 @@ def start_new_game(num_teams):
             inputs[31]=2.0 
             inputs[32]=1.0; inputs[33]=1.0; inputs[34]=1.0
         else:
-            # Default values for other stores
             inputs[0]=50.0; inputs[1]=3.0; inputs[6]=50.0; inputs[13]=45.0
             inputs[17]=1; inputs[18]=25.0; inputs[19]=1; inputs[20]=10.0; 
             inputs[21]=1500.0; inputs[23]=40.0
 
-        # --- Setup Period 1 History ---
         financials = {
             'cash': 15000.0, 'investments': 2000.0, 'acct_receivable': 45000.0,
             'inventory_rx': 55000.0, 'inventory_otc': 25000.0,
@@ -107,7 +129,8 @@ def start_new_game(num_teams):
             "Store Name": store_name, "LOCATION": "Not Selected",
             "Net Profit": 9848.0, "ROI": 7.0, 
             "TOT SALES": 142312.0, "Rx SALES": 115752.0, "OTH SALES": 26560.0,
-            "Rx Mkt Sh": 12.5, "Avg Rx Pr": 19.61, "Rx Ing $": 11.23, "Rx GM%": 42.7,
+            "Rx Mkt Sh": 12.5, "OTC Mkt Sh": 12.5, 
+            "Avg Rx Pr": 19.61, "Rx Ing $": 11.23, "Rx GM%": 42.7,
             "Store Hrs": 46.0, "A/P Paid": 20000.0, "E. Loan": 0.0,
             "Net Worth": 138000.0, "Cash Flow": 5000.0, "Cash": 15000.0,
             "Investments": 2000.0,
@@ -115,8 +138,7 @@ def start_new_game(num_teams):
             "ROA": 3.0, "G Margin": 45.0, "Debt/NW": 1.17
         }
         
-        if i == 1:
-            p1_history["LOCATION"] = "Medical Center"
+        if i == 1: p1_history["LOCATION"] = "Medical Center"
 
         st.session_state.players[team_id] = {
             'shop_name': store_name,
@@ -125,63 +147,145 @@ def start_new_game(num_teams):
             'period': 2,
             'inputs': inputs,
             'financials': financials,
-            'prev_stats': { 'avg_price': 19.61, 'mkt_share': 12.5, 'rx_per_hr': 5.0 },
+            'prev_stats': { 
+                'avg_price': 19.61, 
+                'mkt_share': 12.5, 
+                'rx_per_hr': 5.0,
+                'otc_markup': 47.0 if i == 1 else 45.0 # Store previous OTC markup
+            },
             'history': [p1_history]
         }
 
-# Default Start 5 Teams
 if 'players' not in st.session_state:
     start_new_game(5)
 
 # ==========================================
 # 3. LOGIC ENGINE
 # ==========================================
-def calculate_results(store_list, w_df):
+def calculate_results(store_list, rx_w_df, otc_w_df):
     data = []
     base_cost = 11.23; price_constant = 2.90
+    loc_code = store_list[0]['p']['location_code']
+    loc_name = LOC_MAP[loc_code]
+    
+    # ----------------------------------------------------
+    # PHASE 1: PREPARE DATA & Rx CALCULATIONS
+    # ----------------------------------------------------
     for p in store_list:
         tid = p['id']; inp = p['p']['inputs']; prev = p['p']['prev_stats']; fin = p['p']['financials']
         curr_price = (base_cost * (1 + inp[0]/100)) + inp[1] + price_constant
         inv_level = (fin['inventory_rx'] + fin['inventory_otc']) / 1000
-        data.append({
-            'id': tid, 'price_past': prev['avg_price'], 'price_pres': curr_price,
-            'promo': inp[7], 'hours': inp[6], 'delivery': inp[3], 'records': inp[4], 
-            'credit': inp[5], 'inventory': inv_level, 'mkt_share': prev['mkt_share'], 'efficiency': prev['rx_per_hr']
-        })
-    df_comp = pd.DataFrame(data)
-    loc_code = store_list[0]['p']['location_code']
-    weights = w_df[LOC_MAP[loc_code]].values
-    df_ranks = pd.DataFrame({'id': df_comp['id']})
-    def get_rank(series, ascending): return series.rank(method='min', ascending=ascending)
-    df_ranks['r1'] = get_rank(df_comp['price_past'], False)
-    df_ranks['r2'] = get_rank(df_comp['price_pres'], False)
-    for i, col in enumerate(['promo','hours','delivery','records','credit','inventory','mkt_share','efficiency']):
-        df_ranks[f'r{i+3}'] = get_rank(df_comp[col], True)
-    final_scores = {}
-    for index, row in df_ranks.iterrows():
-        total_score = sum(row[f'r{i+1}'] * weights[i] for i in range(10))
-        final_scores[row['id']] = total_score
         
-    total_loc_score = sum(final_scores.values())
-    base_market_size = len(stores) * 6000 
+        data.append({
+            'id': tid, 
+            # Rx Factors
+            'price_past': prev['avg_price'], 
+            'price_pres': curr_price,
+            'promo': inp[7], 'hours': inp[6], 
+            'delivery': inp[3], 'records': inp[4], 'credit': inp[5], 
+            'inventory': inv_level, 
+            'mkt_share': prev['mkt_share'], 
+            'efficiency': prev['rx_per_hr'],
+            # OTC Factors Variables
+            'otc_markup_past': prev.get('otc_markup', 45.0), # Factor 1
+            'otc_markup_pres': inp[13],                      # Factor 2
+            'advertising': inp[7],                           # Factor 3 (Same as Promo Exp)
+            # Factor 4 (Hours) -> already has 'hours'
+            # Factor 5 (Inventory) -> already has 'inventory'
+            # Factor 6 (Rx Share) -> Will be added after Rx Calc
+        })
     
-    for s_data in stores:
+    df_comp = pd.DataFrame(data)
+    
+    # --- Rx SCORING ---
+    rx_weights = rx_w_df.set_index("Factor")[loc_name].values
+    df_rx_ranks = pd.DataFrame({'id': df_comp['id']})
+    def get_rank(series, ascending): return series.rank(method='min', ascending=ascending)
+    
+    df_rx_ranks['r0'] = get_rank(df_comp['price_past'], False) 
+    df_rx_ranks['r1'] = get_rank(df_comp['price_pres'], False) 
+    cols_map = ['promo','hours','delivery','records','credit','inventory','mkt_share','efficiency']
+    for i, col in enumerate(cols_map):
+        df_rx_ranks[f'r{i+2}'] = get_rank(df_comp[col], True) 
+        
+    rx_scores = {}
+    for index, row in df_rx_ranks.iterrows():
+        rx_scores[row['id']] = sum(row[f'r{i}'] * rx_weights[i] for i in range(10))
+
+    total_rx_score = sum(rx_scores.values())
+    rx_shares = {k: (v/total_rx_score if total_rx_score else 0) for k,v in rx_scores.items()}
+
+    # ----------------------------------------------------
+    # PHASE 2: OTC CALCULATIONS (6 SPECIFIC FACTORS)
+    # ----------------------------------------------------
+    otc_weights = otc_w_df.set_index("Factor")[loc_name].values
+    df_otc_ranks = pd.DataFrame({'id': df_comp['id']})
+    
+    # Add Rx Share Result to DataFrame for Factor 6
+    df_comp['rx_share_result'] = df_comp['id'].map(rx_shares)
+    
+    # Ranking for OTC Factors
+    # 1. Previous OTC Markup (Low = Good -> Ascending=False in rank func? No, Low is Rank 1, High is Rank N if ascending=True. 
+    # Wait, usually for Score: Higher Rank Score = Better.
+    # So if Low Markup is Good, we want Low Markup to get High Rank Score.
+    # rank(ascending=False) -> Lowest value gets Highest Rank (N). YES.
+    df_otc_ranks['o0'] = get_rank(df_comp['otc_markup_past'], False)
+    
+    # 2. Present OTC Markup (Low = Good)
+    df_otc_ranks['o1'] = get_rank(df_comp['otc_markup_pres'], False)
+    
+    # 3. Advertising Index (High = Good)
+    df_otc_ranks['o2'] = get_rank(df_comp['advertising'], True)
+    
+    # 4. Hours (High = Good)
+    df_otc_ranks['o3'] = get_rank(df_comp['hours'], True)
+    
+    # 5. Inventory Level (High = Good)
+    df_otc_ranks['o4'] = get_rank(df_comp['inventory'], True)
+    
+    # 6. Rx Market Share (High = Good)
+    df_otc_ranks['o5'] = get_rank(df_comp['rx_share_result'], True)
+
+    otc_scores = {}
+    for index, row in df_otc_ranks.iterrows():
+        otc_scores[row['id']] = sum(row[f'o{i}'] * otc_weights[i] for i in range(6))
+        
+    total_otc_score = sum(otc_scores.values())
+    otc_shares = {k: (v/total_otc_score if total_otc_score else 0) for k,v in otc_scores.items()}
+
+    # ----------------------------------------------------
+    # PHASE 3: FINANCIALS
+    # ----------------------------------------------------
+    base_rx_market = len(store_list) * 6000 
+    base_otc_market_usd = base_rx_market * 8.0 
+    
+    for s_data in store_list:
         tid = s_data['id']; p = s_data['p']; inp = p['inputs']; fin = p['financials']
-        my_score = final_scores[tid]
-        mkt_share = (my_score / total_loc_score) if total_loc_score else 0
-        rx_count = base_market_size * mkt_share
+        
+        my_rx_share = rx_shares[tid]
+        my_otc_share = otc_shares[tid]
+        
+        rx_count = base_rx_market * my_rx_share
         avg_rx_price = (base_cost * (1 + inp[0]/100)) + inp[1] + price_constant
         rx_sales = rx_count * avg_rx_price
-        otc_ratio = 0.25 if loc_code == 1 else 0.45
-        otc_sales = rx_sales * otc_ratio * (1 + (inp[7]/5000)) * (1 + inp[13]/100)
+        
+        loc_mult = 1.0
+        if loc_code == 3: loc_mult = 1.5 
+        
+        potential_otc_sales = base_otc_market_usd * loc_mult
+        otc_sales = potential_otc_sales * my_otc_share
         tot_sales = rx_sales + otc_sales
+        
         cost_rx = rx_sales / (1 + (inp[0]/100))
         cost_otc = otc_sales / (1 + (inp[13]/100))
+        
         req_ret_rx = min(inp[26], fin['inventory_rx'] * 0.25)
         req_ret_otc = min(inp[27], fin['inventory_otc'] * 0.25)
         fin['inventory_rx'] = max(0, (fin['inventory_rx'] + inp[14] - req_ret_rx) - cost_rx)
         fin['inventory_otc'] = max(0, (fin['inventory_otc'] + inp[15] - req_ret_otc) - cost_otc)
-        tot_cogs = cost_rx + cost_otc; gross_margin = tot_sales - tot_cogs
+        tot_cogs = cost_rx + cost_otc
+        gross_margin = tot_sales - tot_cogs
+        
         hrs_open = inp[6]
         wages = (inp[17]*inp[18] + inp[19]*inp[20]) * hrs_open * 13
         if hrs_open > 40: wages *= 1.1
@@ -194,6 +298,7 @@ def calculate_results(store_list, w_df):
         ar_interest_income = (fin['acct_receivable'] * 0.5) * (inp[31] / 100)
         tot_exp = wages + ben_cost + fixed_ops + inp[7] + depr + interest_exp
         net_profit = gross_margin - tot_exp + ar_interest_income
+        
         pay_ap = min(inp[28], fin['acct_payable'])
         debt_written = inp[29]
         cash_in = (tot_sales * 0.9) + debt_written
@@ -202,10 +307,12 @@ def calculate_results(store_list, w_df):
         fin['retained_earnings'] += net_profit
         fin['long_term_debt'] += (debt_written - inp[30]) 
         fin['acct_payable'] = max(0, fin['acct_payable'] - pay_ap + (inp[14]+inp[15])*0.5)
+        
         e_loan = 0
         if fin['cash'] < 0:
             e_loan = abs(fin['cash']) + 2000
             fin['notes_payable'] += e_loan; fin['cash'] += e_loan
+            
         nw = fin['retained_earnings']
         curr_assets = fin['cash'] + fin['investments'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['acct_receivable']
         curr_liab = fin['acct_payable'] + fin['notes_payable']
@@ -214,7 +321,8 @@ def calculate_results(store_list, w_df):
             "Store Name": p['shop_name'], "LOCATION": LOC_MAP[p['location_code']],
             "Net Profit": net_profit, "ROI": (net_profit/nw*100) if nw else 0,
             "TOT SALES": tot_sales, "Rx SALES": rx_sales, "OTH SALES": otc_sales,
-            "Rx Mkt Sh": mkt_share * 100, "Avg Rx Pr": avg_rx_price,
+            "Rx Mkt Sh": my_rx_share * 100, "OTC Mkt Sh": my_otc_share * 100,
+            "Avg Rx Pr": avg_rx_price,
             "Store Hrs": hrs_open, "E. Loan": e_loan, 
             "Net Worth": nw, "Cash Flow": cash_in - cash_out, "Cash": fin['cash'],
             "Current": curr_assets/curr_liab if curr_liab else 0,
@@ -224,17 +332,26 @@ def calculate_results(store_list, w_df):
             "G Margin": (gross_margin/tot_sales*100) if tot_sales else 0,
             "Debt/NW": ((fin['long_term_debt'] + curr_liab) / nw) if nw else 0
         })
-        p['prev_stats'] = {'avg_price': avg_rx_price, 'mkt_share': mkt_share*100, 'rx_per_hr': rx_count/(hrs_open*13)}
+        # Save current stats for next period's 'Past' factors
+        p['prev_stats'] = {
+            'avg_price': avg_rx_price, 
+            'mkt_share': my_rx_share*100, 
+            'rx_per_hr': rx_count/(hrs_open*13),
+            'otc_markup': inp[13] # Save for next period's 'Previous OTC Markup'
+        }
         p['status'] = 'Thinking'; p['period'] += 1
 
 def run_simulation_step():
-    w_df = st.session_state.weights_df
+    rx_w = st.session_state.rx_weights_df
+    otc_w = st.session_state.otc_weights_df
+    
     stores_by_loc = {1: [], 2: [], 3: []}
     for tid, p in st.session_state.players.items():
         if p['location_code'] != 0:
             stores_by_loc[p['location_code']].append({'id': tid, 'p': p})
+            
     for loc_code, stores in stores_by_loc.items():
-        if stores: calculate_results(stores, w_df)
+        if stores: calculate_results(stores, rx_w, otc_w)
     st.session_state.global_period += 1
 
 # ==========================================
@@ -249,9 +366,7 @@ with st.sidebar:
         pwd = st.text_input("Password", type="password")
         if pwd == ADMIN_PASSWORD:
             st.success("Authorized")
-            
-            # --- New Feature: Team Count Setting ---
-            st.markdown("### ⚙️ Game Settings")
+            st.markdown("### ⚙️ Game Setup")
             num_teams = st.number_input("Number of Teams", min_value=1, max_value=7, value=5, step=1)
             
             if st.button("🔄 New Game / Reset", type="primary"):
@@ -278,22 +393,14 @@ if role == "Student":
         sel_id = st.selectbox("Select Your Team", t_ids, format_func=lambda x: st.session_state.players[x]['shop_name'])
         p = st.session_state.players[sel_id]
 
-        # --- STORE SETUP (RENAME) SECTION ---
         if p['period'] == 2 and p['status'] == 'Thinking':
-            st.info("👋 Welcome! Please set up your store details before starting.")
+            st.info("👋 Welcome! Please set up your store details.")
             with st.container():
                 c1, c2 = st.columns(2)
-                # Store Name Input
                 new_name = c1.text_input("📛 Store Name", p['shop_name'])
-                if new_name != p['shop_name']:
-                    p['shop_name'] = new_name
-                    st.rerun()
-                
-                # Location Input
+                if new_name != p['shop_name']: p['shop_name'] = new_name; st.rerun()
                 loc_idx = c2.selectbox("📍 Location", [0,1,2,3], format_func=lambda x: LOC_MAP[x], index=p['location_code'])
-                if loc_idx != p['location_code']:
-                    p['location_code'] = loc_idx
-                    st.rerun()
+                if loc_idx != p['location_code']: p['location_code'] = loc_idx; st.rerun()
             st.markdown("---")
 
         st.title(f"🏥 {p['shop_name']}")
@@ -316,13 +423,10 @@ if role == "Student":
                                 p['inputs'][i] = st.number_input(f"{i+1}. {label}", value=val)
                     st.markdown("---")
                     if st.form_submit_button("✅ Submit Decisions", type="primary"):
-                        p['status'] = 'Submitted'
-                        st.rerun()
+                        p['status'] = 'Submitted'; st.rerun()
             else:
-                st.success("Submitted! Waiting for Instructor.")
-                if st.button("Edit Decisions"):
-                    p['status'] = 'Thinking'
-                    st.rerun()
+                st.success("Submitted! Waiting for Instructor."); 
+                if st.button("Edit Decisions"): p['status'] = 'Thinking'; st.rerun()
 
         with tab2:
             st.subheader("Performance History")
@@ -331,8 +435,8 @@ if role == "Student":
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Net Profit", f"${last['Net Profit']:,.0f}")
                 m2.metric("Sales", f"${last['TOT SALES']:,.0f}")
-                m3.metric("Cash", f"${last['Cash']:,.0f}")
-                m4.metric("ROI", f"{last['ROI']:.2f}%")
+                m3.metric("Rx Share", f"{last['Rx Mkt Sh']:.1f}%")
+                m4.metric("OTC Share", f"{last['OTC Mkt Sh']:.1f}%")
                 st.markdown("---")
                 df_hist = pd.DataFrame(p['history'])
                 display_cols = [c for c in REPORT_COLUMNS if c in df_hist.columns]
@@ -342,10 +446,31 @@ if role == "Student":
 
 elif role == "Instructor" and pwd == ADMIN_PASSWORD:
     st.header("👨‍🏫 Instructor Dashboard")
-    tab_conf, tab_res = st.tabs(["⚙️ Configuration", "🏆 Results"])
+    tab_conf, tab_res = st.tabs(["⚙️ Weights Configuration", "🏆 Results"])
+    
     with tab_conf:
-        st.write("### Simulation Weights")
-        st.session_state.weights_df = st.data_editor(st.session_state.weights_df, use_container_width=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.write("### 💊 Rx Market Share Weights")
+            edited_rx = st.data_editor(st.session_state.rx_weights_df, use_container_width=True, num_rows="fixed", key="rx_w")
+            st.session_state.rx_weights_df = edited_rx
+            # Validate Rx
+            for loc in ["Medical Center", "Neighborhood", "Shopping Center"]:
+                total = edited_rx[loc].sum()
+                color = "weight-ok" if total == 100 else "weight-warning"
+                st.markdown(f"<span class='{color}'>Rx {loc}: {total} (Target: 100)</span>", unsafe_allow_html=True)
+                
+        with c2:
+            st.write("### 🛍️ OTC Market Share Weights")
+            st.caption("Using 6 Factors: Previous/Present Markup, Advertising, Hours, Inventory, Rx Share")
+            edited_otc = st.data_editor(st.session_state.otc_weights_df, use_container_width=True, num_rows="fixed", key="otc_w")
+            st.session_state.otc_weights_df = edited_otc
+            # Validate OTC
+            for loc in ["Medical Center", "Neighborhood", "Shopping Center"]:
+                total = edited_otc[loc].sum()
+                color = "weight-ok" if total == 100 else "weight-warning"
+                st.markdown(f"<span class='{color}'>OTC {loc}: {total} (Target: 100)</span>", unsafe_allow_html=True)
+
     with tab_res:
         st.write("### Current Standings")
         rows = [p['history'][-1] for p in st.session_state.players.values() if p['history']]
