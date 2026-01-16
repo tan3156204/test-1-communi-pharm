@@ -3,11 +3,37 @@ import pandas as pd
 import numpy as np
 
 # ==========================================
-# 1. System Config
+# 1. System Config & Full Screen Setup
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V10.5 (Corrected P2)", layout="wide")
+st.set_page_config(
+    page_title="Communi-Pharm V10.5 (Full Screen)", 
+    layout="wide", 
+    initial_sidebar_state="expanded"
+)
+
+# --- CSS Hack to Force Full Screen & Remove Margins ---
+st.markdown("""
+<style>
+    /* ขยายพื้นที่แสดงผลให้เต็มจอจริงๆ */
+    .reportview-container .main .block-container {
+        max-width: 100%;
+        padding-top: 1rem;
+        padding-right: 1rem;
+        padding-left: 1rem;
+        padding-bottom: 1rem;
+    }
+    /* ลด Padding ด้านบนเพื่อไม่ให้เสียพื้นที่ */
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 1rem !important;
+        max-width: 95% !important; /* ปรับให้กว้างเกือบสุดขอบ */
+    }
+</style>
+""", unsafe_allow_html=True)
+
 ADMIN_PASSWORD = "admin"
 
+# List of all 36 Inputs
 INPUT_LABELS = [
     "1. Prescription Markup (%)", "2. Prescription Professional Fee ($)", "3. Copayment Discount ($)",
     "4. Delivery Service (0=No, 1=Yes)", "5. Patient Records (0=No, 1=Yes)", "6. Store Offers Credit (0=No, 1=Yes)",
@@ -58,7 +84,7 @@ def initialize_game(num_teams):
         team_id = f"team_{i}"
         
         inputs = [0.0] * 36
-        # Defaults
+        # Defaults for other teams
         inputs[0]=50.0; inputs[1]=3.0; inputs[6]=50.0; inputs[13]=45.0
         inputs[17]=1; inputs[18]=25.0; inputs[19]=1; inputs[20]=10.0; 
         inputs[21]=1500.0; inputs[23]=40.0
@@ -71,44 +97,20 @@ def initialize_game(num_teams):
             store_name = "ThaikritOsot"
             
             # === CORRECTED INPUTS FOR PERIOD 2 ===
-            inputs[0] = 49.0   # Rx Markup
-            inputs[1] = 1.0    # Rx Fee
-            inputs[2] = 0.0    # Copay
-            inputs[3] = 1.0    # Delivery
-            inputs[4] = 1.0    # Records
-            inputs[5] = 1.0    # Credit
-            inputs[6] = 60.0   # Hours
-            inputs[7] = 1000.0 # Promo
-            inputs[8] = 60.0   # % Promo Rx
-            inputs[9] = 0.0    # Invest
-            inputs[10] = 0.0   # Proj Num
-            
-            inputs[13] = 47.0  # OTC Markup
-            inputs[14] = 40000.0 # Rx Pur
-            inputs[15] = 25000.0 # OTC Pur
-            
-            inputs[17] = 1.0   # Pharm
-            inputs[18] = 21.0  # Pay
-            inputs[19] = 1.5   # Clerk
-            inputs[20] = 4.75  # Pay
-            
-            inputs[21] = 8100.0 # Mgr Salary
-            inputs[22] = 33.33 # Time Rx
-            inputs[23] = 60.0  # Mgr Hrs
-            inputs[24] = 8200.0 # Mortgage
-            
-            inputs[26] = 1000.0 # Min Cash
-            
-            inputs[28] = 999999.0 # Pay AP (Index 28 = Input 29)
-            inputs[29] = 10000.0  # Debt Written (Index 29 = Input 30) <-- CORRECTED ($10k)
-            
-            inputs[31] = 2.0      # Int Rate A/R (Index 31 = Input 32) <-- CORRECTED (2%)
-            
-            inputs[32] = 1.0   # Life
-            inputs[33] = 1.0   # Health
-            inputs[34] = 1.0   # 3rd Party
+            inputs[0] = 49.0; inputs[1] = 1.0; inputs[2] = 0.0
+            inputs[3] = 1.0; inputs[4] = 1.0; inputs[5] = 1.0
+            inputs[6] = 60.0; inputs[7] = 1000.0; inputs[8] = 60.0
+            inputs[9] = 0.0; inputs[10] = 0.0
+            inputs[13] = 47.0; inputs[14] = 40000.0; inputs[15] = 25000.0
+            inputs[17] = 1.0; inputs[18] = 21.0
+            inputs[19] = 1.5; inputs[20] = 4.75
+            inputs[21] = 8100.0; inputs[22] = 33.33; inputs[23] = 60.0
+            inputs[24] = 8200.0; inputs[26] = 1000.0
+            inputs[28] = 999999.0; inputs[29] = 10000.0 # Debt Written
+            inputs[31] = 2.0 # Interest Rate
+            inputs[32] = 1.0; inputs[33] = 1.0; inputs[34] = 1.0
 
-            # --- Period 1 History (Static) ---
+            # --- Period 1 History ---
             p1_stats = {
                 "Store Name": "ThaikritOsot", "LOCATION": "Medical Center",
                 "Net Profit": 9848.0, "ROI": 7.0, 
@@ -217,7 +219,7 @@ def process_period():
             inp = p['inputs']
             fin = p['financials']
             
-            # Sales
+            # --- Sales ---
             my_score = rank_scores[tid]
             mkt_share = (my_score / total_loc_score) if total_loc_score else 0
             rx_count = base_market_size * mkt_share
@@ -228,21 +230,19 @@ def process_period():
             otc_sales = rx_sales * otc_ratio * (1 + (inp[7]/5000)) * (1 + inp[13]/100)
             tot_sales = rx_sales + otc_sales
             
-            # COGS
+            # --- COGS ---
             cost_rx = rx_sales / (1 + (inp[0]/100))
             cost_otc = otc_sales / (1 + (inp[13]/100))
             
             req_ret_rx = min(inp[26], fin['inventory_rx'] * 0.25)
             req_ret_otc = min(inp[27], fin['inventory_otc'] * 0.25)
             
-            # Inv Update
             fin['inventory_rx'] = max(0, (fin['inventory_rx'] + inp[14] - req_ret_rx) - cost_rx)
             fin['inventory_otc'] = max(0, (fin['inventory_otc'] + inp[15] - req_ret_otc) - cost_otc)
-
             tot_cogs = cost_rx + cost_otc
             gross_margin = tot_sales - tot_cogs
             
-            # Expenses
+            # --- Expenses ---
             hrs_open = inp[6]
             wages = (inp[17]*inp[18] + inp[19]*inp[20]) * hrs_open * 13
             if hrs_open > 40: wages *= 1.1
@@ -254,30 +254,22 @@ def process_period():
             
             fixed_ops = inp[21] + inp[24] + 3000
             depr = fin['fixed_assets']*0.02
-            
-            # Interest
             interest_exp = (fin['long_term_debt'] + fin['notes_payable']) * 0.025
-            
-            # [NEW] A/R Interest Income (Input 32)
-            # Assume 50% of AR is overdue and subject to interest
             ar_interest_income = (fin['acct_receivable'] * 0.5) * (inp[31] / 100)
             
             tot_exp = wages + ben_cost + fixed_ops + inp[7] + depr + interest_exp
             net_profit = gross_margin - tot_exp + ar_interest_income
             
-            # Cash Flow
+            # --- Cash Flow ---
             pay_ap = min(inp[28], fin['acct_payable'])
-            debt_written = inp[29] # Input 30: Debt Written (Cash In)
+            debt_written = inp[29]
             
-            # Cash In: Sales (90%) + Debt Written + ...
             cash_in = (tot_sales * 0.9) + debt_written
-            
-            # Cash Out: Expenses (less depr) + Purchases + Debt Pay + AP Pay
             cash_out = (tot_exp - depr) + inp[14] + inp[15] + inp[30] + pay_ap
             
             fin['cash'] += (cash_in - cash_out)
             fin['retained_earnings'] += net_profit
-            fin['long_term_debt'] += (debt_written - inp[30]) # Add written debt, sub payment
+            fin['long_term_debt'] += (debt_written - inp[30]) 
             fin['acct_payable'] = max(0, fin['acct_payable'] - pay_ap + (inp[14]+inp[15])*0.5)
             
             e_loan = 0
@@ -286,7 +278,7 @@ def process_period():
                 fin['notes_payable'] += e_loan
                 fin['cash'] += e_loan
 
-            # History
+            # --- History ---
             nw = fin['retained_earnings']
             curr_assets = fin['cash'] + fin['investments'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['acct_receivable']
             curr_liab = fin['acct_payable'] + fin['notes_payable']
@@ -314,10 +306,10 @@ def process_period():
     st.session_state.global_period += 1
 
 # ==========================================
-# 4. UI
+# 4. UI Display
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V10.5")
+    st.title("💊 Communi-Pharm")
     role = st.selectbox("Role", ["Student", "Instructor"])
     
     if role == "Instructor":
@@ -336,8 +328,9 @@ with st.sidebar:
             
             if p['status'] == 'Thinking':
                 st.write(f"### 📝 Decisions for Period {st.session_state.global_period}")
+                st.caption("Inputs pre-loaded.")
                 with st.form("inputs"):
-                    cols = st.columns(3)
+                    cols = st.columns(3) # Grid Layout for Inputs
                     for i in range(36):
                         with cols[i%3]:
                             if i in [3,4,5,32,33,34]: p['inputs'][i] = st.selectbox(INPUT_LABELS[i], [0,1], index=int(p['inputs'][i]))
@@ -348,6 +341,7 @@ with st.sidebar:
                 if st.button("Edit"): p['status']='Thinking'; st.rerun()
 
             if p['history']:
+                st.markdown("---")
                 st.write(f"### 📊 History (Last: Period {p['period']-1})")
                 last = p['history'][-1]
                 m1,m2,m3,m4 = st.columns(4)
@@ -358,7 +352,8 @@ with st.sidebar:
                 
                 df_res = pd.DataFrame(list(last.items()), columns=["Metric", "Value"])
                 df_res = df_res[df_res['Metric'].isin(REPORT_COLUMNS)]
-                st.dataframe(df_res, use_container_width=True)
+                # Use container width to fill the screen
+                st.dataframe(df_res, use_container_width=True, height=600)
 
 if role == "Instructor" and pwd == ADMIN_PASSWORD:
     st.title(f"👨‍🏫 Instructor Control (Period {st.session_state.global_period})")
@@ -367,5 +362,6 @@ if role == "Instructor" and pwd == ADMIN_PASSWORD:
     
     rows = [p['history'][-1] for p in st.session_state.players.values() if p['history']]
     if rows:
+        st.write("### 🏆 Leaderboard")
         df = pd.DataFrame(rows).sort_values("Net Profit", ascending=False)
-        st.dataframe(df[REPORT_COLUMNS].style.format(precision=2))
+        st.dataframe(df[REPORT_COLUMNS].style.format(precision=2), use_container_width=True)
