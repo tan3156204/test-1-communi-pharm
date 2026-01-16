@@ -2,50 +2,38 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# --- 1. CONFIG MUST BE FIRST (ต้องอยู่บรรทัดแรกสุดเสมอ) ---
-st.set_page_config(
-    page_title="Communi-Pharm V10.5", 
-    layout="wide", 
-    initial_sidebar_state="collapsed" # หุบ Sidebar เพื่อให้มีพื้นที่กว้างขึ้น
-)
+# --- 1. CONFIG (ต้องอยู่บรรทัดแรกสุด) ---
+st.set_page_config(page_title="Communi-Pharm V10.5 (Classic UI)", layout="wide")
 
-# --- 2. CSS FOR FULL WIDTH & INPUT ALIGNMENT ---
+# --- 2. CSS & STYLING ---
 st.markdown("""
 <style>
-    .reportview-container .main .block-container {
-        max-width: 100%;
-        padding: 1rem;
-    }
     .block-container {
-        padding-top: 1rem !important;
-        padding-bottom: 2rem !important;
-        max-width: 98% !important;
+        padding-top: 2rem;
+        padding-bottom: 2rem;
     }
-    /* ปรับให้ Header ของ Input ดูเด่นขึ้น */
-    div[data-testid="stForm"] {
-        border: 2px solid #f0f2f6;
-        padding: 20px;
-        border-radius: 10px;
+    div[data-testid="stMetricValue"] {
+        font-size: 1.5rem;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. VARIABLES & CONSTANTS ---
+# --- 3. CONSTANTS ---
 ADMIN_PASSWORD = "admin"
 
 INPUT_LABELS = [
-    "1. Rx Markup (%)", "2. Rx Prof. Fee ($)", "3. Copay Discount ($)",
-    "4. Delivery (0/1)", "5. Pt. Records (0/1)", "6. Credit (0/1)",
-    "7. Hours Open/Week", "8. Promo Exp ($)", "9. % Promo Rx (%)",
-    "10. Curr. Invest ($)", "11. Invest Proj #", "12. Invest W/D ($)",
-    "13. W/D Proj #", "14. Markup Other (%)", "15. Rx Inv Purch ($)",
-    "16. Oth Inv Purch ($)", "17. # Pharmacists", "18. Pharm Wage ($)",
-    "19. # Clerks", "20. Clerk Wage ($)", "21. Mgr Salary ($)",
-    "22. Mgr % Time Rx", "23. Mgr Hrs/Week", "24. Mortgage ($)",
-    "25. Coll. Agency ($)", "26. Min Cash ($)", "27. Rx Return ($)",
-    "28. Oth Return ($)", "29. Pay A/P ($)", "30. Debt Written ($)",
-    "31. Debt Payment ($)", "32. Int Rate A/R (%)", "33. Ben: Life (0/1)",
-    "34. Ben: Health (0/1)", "35. 3rd Party (0/1)", "36. HMO Bid ($)"
+    "1. Prescription Markup (%)", "2. Prescription Professional Fee ($)", "3. Copayment Discount ($)",
+    "4. Delivery Service (0=No, 1=Yes)", "5. Patient Records (0=No, 1=Yes)", "6. Store Offers Credit (0=No, 1=Yes)",
+    "7. Hours Pharmacy Open Per Week", "8. Promotional Expenditures ($)", "9. % Promotion on Rx Dept (%)",
+    "10. Current Period’s Investment ($)", "11. Investment Project Number", "12. Investment Withdrawal ($)",
+    "13. Investment Withdrawal Project Number", "14. Markup on Other Items (%)", "15. Prescription Inv Purchases ($)",
+    "16. Other Inv Purchases ($)", "17. Number Pharmacists", "18. Pharmacist’s Hourly Pay ($)",
+    "19. Number Sales Clerks", "20. Sales Clerk’s Hourly Pay ($)", "21. Manager’s Salary ($)",
+    "22. Manager’s % Time Rx", "23. Manager Hours/Week", "24. Mortgage Payment ($)",
+    "25. Collection Agency ($)", "26. Minimum Cash Balance ($)", "27. Rx Inv Returned ($)",
+    "28. Other Inv Returned ($)", "29. Payment on A/P ($)", "30. Long Term Debt Written ($)",
+    "31. Long Term Debt Payment ($)", "32. Interest Rate A/R (%)", "33. Benefits: Life Ins (0/1)",
+    "34. Benefits: Health Ins (0/1)", "35. Third-Party Rx (0/1)", "36. Bid for HMO Contract ($)"
 ]
 
 REPORT_COLUMNS = [
@@ -88,6 +76,7 @@ def initialize_game(num_teams):
         store_name = f"Store {i}"
         history = []
         
+        # --- Config for ThaikritOsot (Corrected P2 Logic) ---
         if i == 1:
             store_name = "ThaikritOsot"
             inputs[0] = 49.0; inputs[1] = 1.0; inputs[2] = 0.0
@@ -99,10 +88,11 @@ def initialize_game(num_teams):
             inputs[19] = 1.5; inputs[20] = 4.75
             inputs[21] = 8100.0; inputs[22] = 33.33; inputs[23] = 60.0
             inputs[24] = 8200.0; inputs[26] = 1000.0
-            inputs[28] = 999999.0; inputs[29] = 10000.0 
-            inputs[31] = 2.0 
+            inputs[28] = 999999.0; inputs[29] = 10000.0 # Debt Written
+            inputs[31] = 2.0 # Interest Rate
             inputs[32] = 1.0; inputs[33] = 1.0; inputs[34] = 1.0
 
+            # P1 History
             p1_stats = {
                 "Store Name": "ThaikritOsot", "LOCATION": "Medical Center",
                 "Net Profit": 9848.0, "ROI": 7.0, 
@@ -148,49 +138,33 @@ if 'players' not in st.session_state:
 # --- 5. LOGIC ENGINE ---
 def calculate_rank_scores(store_list, w_df):
     data = []
-    base_cost = 11.23 
-    price_constant = 2.90 
-
+    base_cost = 11.23; price_constant = 2.90
     for p in store_list:
-        tid = p['id']
-        inp = p['p']['inputs']
-        prev = p['p']['prev_stats']
-        fin = p['p']['financials']
-        
+        tid = p['id']; inp = p['p']['inputs']; prev = p['p']['prev_stats']; fin = p['p']['financials']
         curr_price = (base_cost * (1 + inp[0]/100)) + inp[1] + price_constant
         inv_level = (fin['inventory_rx'] + fin['inventory_otc']) / 1000
-        
         data.append({
-            'id': tid,
-            'price_past': prev['avg_price'],
-            'price_pres': curr_price,
-            'promo': inp[7], 'hours': inp[6], 'delivery': inp[3],
-            'records': inp[4], 'credit': inp[5], 'inventory': inv_level,
-            'mkt_share': prev['mkt_share'], 'efficiency': prev['rx_per_hr']
+            'id': tid, 'price_past': prev['avg_price'], 'price_pres': curr_price,
+            'promo': inp[7], 'hours': inp[6], 'delivery': inp[3], 'records': inp[4], 
+            'credit': inp[5], 'inventory': inv_level, 'mkt_share': prev['mkt_share'], 'efficiency': prev['rx_per_hr']
         })
-    
     df_comp = pd.DataFrame(data)
     loc_code = store_list[0]['p']['location_code']
     weights = w_df[LOC_MAP[loc_code]].values
-    
     df_ranks = pd.DataFrame({'id': df_comp['id']})
     def get_rank(series, ascending): return series.rank(method='min', ascending=ascending)
-
     df_ranks['r1'] = get_rank(df_comp['price_past'], False)
     df_ranks['r2'] = get_rank(df_comp['price_pres'], False)
     for i, col in enumerate(['promo','hours','delivery','records','credit','inventory','mkt_share','efficiency']):
         df_ranks[f'r{i+3}'] = get_rank(df_comp[col], True)
-    
     final_scores = {}
     for index, row in df_ranks.iterrows():
         total_score = sum(row[f'r{i+1}'] * weights[i] for i in range(10))
         final_scores[row['id']] = total_score
-        
     return final_scores, base_cost, price_constant
 
 def process_period():
     w_df = st.session_state.weights_df
-    
     stores_by_loc = {1: [], 2: [], 3: []}
     for tid, p in st.session_state.players.items():
         if p['status'] == 'Submitted' and p['location_code'] != 0:
@@ -198,77 +172,52 @@ def process_period():
             
     for loc_code, stores in stores_by_loc.items():
         if not stores: continue
-        
         rank_scores, base_cost, pr_const = calculate_rank_scores(stores, w_df)
         total_loc_score = sum(rank_scores.values())
         base_market_size = len(stores) * 6000 
         
         for s_data in stores:
-            tid = s_data['id']
-            p = s_data['p']
-            inp = p['inputs']
-            fin = p['financials']
-            
-            # --- Sales ---
+            tid = s_data['id']; p = s_data['p']; inp = p['inputs']; fin = p['financials']
             my_score = rank_scores[tid]
             mkt_share = (my_score / total_loc_score) if total_loc_score else 0
             rx_count = base_market_size * mkt_share
             avg_rx_price = (base_cost * (1 + inp[0]/100)) + inp[1] + pr_const
             rx_sales = rx_count * avg_rx_price
-            
             otc_ratio = 0.25 if loc_code == 1 else 0.45
             otc_sales = rx_sales * otc_ratio * (1 + (inp[7]/5000)) * (1 + inp[13]/100)
             tot_sales = rx_sales + otc_sales
-            
-            # --- COGS ---
             cost_rx = rx_sales / (1 + (inp[0]/100))
             cost_otc = otc_sales / (1 + (inp[13]/100))
-            
             req_ret_rx = min(inp[26], fin['inventory_rx'] * 0.25)
             req_ret_otc = min(inp[27], fin['inventory_otc'] * 0.25)
-            
             fin['inventory_rx'] = max(0, (fin['inventory_rx'] + inp[14] - req_ret_rx) - cost_rx)
             fin['inventory_otc'] = max(0, (fin['inventory_otc'] + inp[15] - req_ret_otc) - cost_otc)
-            tot_cogs = cost_rx + cost_otc
-            gross_margin = tot_sales - tot_cogs
-            
-            # --- Expenses ---
+            tot_cogs = cost_rx + cost_otc; gross_margin = tot_sales - tot_cogs
             hrs_open = inp[6]
             wages = (inp[17]*inp[18] + inp[19]*inp[20]) * hrs_open * 13
             if hrs_open > 40: wages *= 1.1
-            
-            ben_rate = 0
-            if inp[32]==1: ben_rate += 0.05
-            if inp[33]==1: ben_rate += 0.15
+            ben_rate = 0.05 if inp[32]==1 else 0
+            ben_rate += 0.15 if inp[33]==1 else 0
             ben_cost = wages * ben_rate
-            
             fixed_ops = inp[21] + inp[24] + 3000
             depr = fin['fixed_assets']*0.02
             interest_exp = (fin['long_term_debt'] + fin['notes_payable']) * 0.025
             ar_interest_income = (fin['acct_receivable'] * 0.5) * (inp[31] / 100)
-            
             tot_exp = wages + ben_cost + fixed_ops + inp[7] + depr + interest_exp
             net_profit = gross_margin - tot_exp + ar_interest_income
-            
-            # --- Cash Flow ---
             pay_ap = min(inp[28], fin['acct_payable'])
             debt_written = inp[29]
-            
             cash_in = (tot_sales * 0.9) + debt_written
             cash_out = (tot_exp - depr) + inp[14] + inp[15] + inp[30] + pay_ap
-            
             fin['cash'] += (cash_in - cash_out)
             fin['retained_earnings'] += net_profit
             fin['long_term_debt'] += (debt_written - inp[30]) 
             fin['acct_payable'] = max(0, fin['acct_payable'] - pay_ap + (inp[14]+inp[15])*0.5)
-            
             e_loan = 0
             if fin['cash'] < 0:
                 e_loan = abs(fin['cash']) + 2000
-                fin['notes_payable'] += e_loan
-                fin['cash'] += e_loan
+                fin['notes_payable'] += e_loan; fin['cash'] += e_loan
 
-            # --- History ---
             nw = fin['retained_earnings']
             curr_assets = fin['cash'] + fin['investments'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['acct_receivable']
             curr_liab = fin['acct_payable'] + fin['notes_payable']
@@ -288,121 +237,79 @@ def process_period():
                 "G Margin": (gross_margin / tot_sales*100) if tot_sales else 0,
                 "Debt/NW": ((fin['long_term_debt'] + curr_liab) / nw) if nw else 0
             })
-            
             p['prev_stats'] = {'avg_price': avg_rx_price, 'mkt_share': mkt_share*100, 'rx_per_hr': rx_count/(hrs_open*13)}
-            p['status'] = 'Thinking'
-            p['period'] = p.get('period', 1) + 1
-
+            p['status'] = 'Thinking'; p['period'] = p.get('period', 1) + 1
     st.session_state.global_period += 1
 
-# --- 6. UI RENDER (ปรับปรุงใหม่: แบ่งจอ ซ้าย/ขวา) ---
+# --- 6. UI RENDER (CLASSIC TABBED STYLE) ---
 with st.sidebar:
     st.title("💊 Communi-Pharm")
+    st.caption("Classic Mode (V10.0 UI / V10.5 Logic)")
     role = st.selectbox("Select Role", ["Student", "Instructor"])
     
     if role == "Instructor":
         pwd = st.text_input("Password", type="password")
         if pwd == ADMIN_PASSWORD:
-            if st.button("Run Simulation", type="primary"):
-                process_period(); st.rerun()
-            if st.button("Reset Game"):
-                initialize_game(5); st.rerun()
+            st.markdown("---")
+            if st.button("🚀 Run Simulation", type="primary"): process_period(); st.rerun()
+            if st.button("⚠️ Reset Game"): initialize_game(5); st.rerun()
 
-# --- MAIN CONTENT AREA ---
 if role == "Student":
     if st.session_state.players:
-        # เลือก Team ด้านบนสุด เพื่อไม่ให้กินที่
         t_ids = list(st.session_state.players.keys())
-        col_top1, col_top2 = st.columns([1, 4])
-        with col_top1:
-            sel_id = st.selectbox("Select Your Store", t_ids, format_func=lambda x: st.session_state.players[x]['shop_name'])
-        
+        sel_id = st.selectbox("Your Store", t_ids, format_func=lambda x: st.session_state.players[x]['shop_name'])
         p = st.session_state.players[sel_id]
         
-        # --- แบ่งหน้าจอเป็น 2 ส่วน: ซ้าย (History) | ขวา (Inputs) ---
-        col_left, col_right = st.columns([1.4, 1], gap="large") 
-
-        # === LEFT COLUMN: HISTORY & RESULTS ===
-        with col_left:
-            st.header(f"📊 {p['shop_name']}")
-            st.caption(f"Location: {LOC_MAP[p['location_code']]} | Status: {p['status']}")
-            
+        st.header(f"🏥 {p['shop_name']} (Period {st.session_state.global_period})")
+        
+        # --- CLASSIC TABS ---
+        tab1, tab2 = st.tabs(["📝 Decision Form (Inputs)", "📊 Financial Reports"])
+        
+        with tab1:
+            if p['status'] == 'Thinking':
+                st.info("Enter your decisions for the upcoming period.")
+                with st.form("classic_form"):
+                    cols = st.columns(3) # 3-Column Grid for Inputs
+                    for i in range(36):
+                        with cols[i%3]:
+                            if i in [3,4,5,32,33,34]: 
+                                p['inputs'][i] = st.selectbox(INPUT_LABELS[i], [0,1], index=int(p['inputs'][i]))
+                            else: 
+                                p['inputs'][i] = st.number_input(INPUT_LABELS[i], value=float(p['inputs'][i]))
+                    
+                    st.markdown("---")
+                    if st.form_submit_button("✅ Submit Decisions", type="primary"):
+                        p['status'] = 'Submitted'
+                        st.rerun()
+            else:
+                st.success("Decisions have been submitted successfully.")
+                st.write("Waiting for the instructor to process the period.")
+                if st.button("Edit Decisions"):
+                    p['status'] = 'Thinking'
+                    st.rerun()
+        
+        with tab2:
             if p['history']:
                 last = p['history'][-1]
-                
-                # แสดง Metric สำคัญ 4 ตัวบน
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Net Profit", f"${last['Net Profit']:,.0f}")
                 m2.metric("Total Sales", f"${last['TOT SALES']:,.0f}")
                 m3.metric("Cash", f"${last['Cash']:,.0f}")
-                m4.metric("ROI", f"{last['ROI']:.1f}%")
+                m4.metric("ROI", f"{last['ROI']:.2f}%")
                 
-                st.divider()
-                
-                # แสดงตารางผลลัพธ์
-                st.subheader(f"Results for Period {p['period']-1}")
+                st.write(f"### Results for Period {p['period']-1}")
                 df_res = pd.DataFrame(list(last.items()), columns=["Metric", "Value"])
                 df_res = df_res[df_res['Metric'].isin(REPORT_COLUMNS)]
-                
-                # ปรับแต่งตารางให้ดูง่าย
-                st.dataframe(
-                    df_res.style.format(precision=2), 
-                    use_container_width=True, 
-                    height=600,
-                    hide_index=True
-                )
+                st.dataframe(df_res, use_container_width=True, height=600)
             else:
-                st.info("Waiting for Period 1 results...")
-
-        # === RIGHT COLUMN: INPUT DECISIONS ===
-        with col_right:
-            if p['status'] == 'Thinking':
-                st.write(f"### 📝 Decisions: Period {st.session_state.global_period}")
-                st.caption("Please update your inputs on the right.")
-                
-                with st.form("decision_form"):
-                    # แบ่งเป็น 2 คอลัมน์ย่อยภายใน Form เพื่อให้ไม่ยาวเกินไป
-                    ic1, ic2 = st.columns(2)
-                    
-                    for i in range(36):
-                        # สลับลงคอลัมน์ซ้าย/ขวา
-                        target_col = ic1 if i % 2 == 0 else ic2
-                        with target_col:
-                            label = INPUT_LABELS[i]
-                            # ตัดข้อความให้สั้นลงใน Label
-                            short_label = label.split('(')[0].strip()[:20] + "..." if len(label) > 25 else label
-                            
-                            if i in [3,4,5,32,33,34]: # Boolean inputs
-                                p['inputs'][i] = st.selectbox(
-                                    short_label, 
-                                    [0,1], 
-                                    index=int(p['inputs'][i]),
-                                    key=f"in_{i}"
-                                )
-                            else: # Numeric inputs
-                                p['inputs'][i] = st.number_input(
-                                    short_label, 
-                                    value=float(p['inputs'][i]),
-                                    key=f"in_{i}"
-                                )
-                    
-                    st.markdown("---")
-                    submitted = st.form_submit_button("✅ Submit Decisions", type="primary", use_container_width=True)
-                    if submitted:
-                        p['status'] = 'Submitted'
-                        st.rerun()
-            else:
-                st.success("Decisions Submitted!")
-                st.write("Waiting for instructor to process results.")
-                if st.button("Edit Decisions"):
-                    p['status'] = 'Thinking'
-                    st.rerun()
+                st.info("No reports available yet. Submit Period 1 decisions to begin.")
 
 elif role == "Instructor" and pwd == ADMIN_PASSWORD:
-    st.title("👨‍🏫 Instructor Dashboard")
+    st.title("Instructor Dashboard")
     rows = [p['history'][-1] for p in st.session_state.players.values() if p['history']]
     if rows:
+        st.write("### 🏆 Current Standings")
         df = pd.DataFrame(rows).sort_values("Net Profit", ascending=False)
         st.dataframe(df[REPORT_COLUMNS].style.format(precision=2), use_container_width=True)
     else:
-        st.info("No data available yet.")
+        st.info("No data yet.")
