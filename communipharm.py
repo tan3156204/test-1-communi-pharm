@@ -2,47 +2,50 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# --- 1. CONFIG (ต้องอยู่บรรทัดแรกสุด) ---
-st.set_page_config(page_title="Communi-Pharm V10.5 (Classic UI)", layout="wide")
+# ==========================================
+# 1. CONFIGURATION
+# ==========================================
+st.set_page_config(page_title="Communi-Pharm Simulation", layout="wide")
 
-# --- 2. CSS & STYLING ---
+# CSS Styling
 st.markdown("""
 <style>
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-    div[data-testid="stMetricValue"] {
-        font-size: 1.5rem;
+    .block-container { padding-top: 2rem; }
+    div[data-testid="stMetricValue"] { font-size: 1.4rem; }
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #f0f2f6; border-radius: 5px; }
+    .stTabs [aria-selected="true"] { background-color: #e6f3ff; border: 1px solid #2980b9; }
+    /* Highlight Store Setup Box */
+    div[data-testid="stExpander"] {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        background-color: #f9f9f9;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. CONSTANTS ---
 ADMIN_PASSWORD = "admin"
 
 INPUT_LABELS = [
-    "1. Prescription Markup (%)", "2. Prescription Professional Fee ($)", "3. Copayment Discount ($)",
-    "4. Delivery Service (0=No, 1=Yes)", "5. Patient Records (0=No, 1=Yes)", "6. Store Offers Credit (0=No, 1=Yes)",
-    "7. Hours Pharmacy Open Per Week", "8. Promotional Expenditures ($)", "9. % Promotion on Rx Dept (%)",
-    "10. Current Period’s Investment ($)", "11. Investment Project Number", "12. Investment Withdrawal ($)",
-    "13. Investment Withdrawal Project Number", "14. Markup on Other Items (%)", "15. Prescription Inv Purchases ($)",
-    "16. Other Inv Purchases ($)", "17. Number Pharmacists", "18. Pharmacist’s Hourly Pay ($)",
-    "19. Number Sales Clerks", "20. Sales Clerk’s Hourly Pay ($)", "21. Manager’s Salary ($)",
-    "22. Manager’s % Time Rx", "23. Manager Hours/Week", "24. Mortgage Payment ($)",
-    "25. Collection Agency ($)", "26. Minimum Cash Balance ($)", "27. Rx Inv Returned ($)",
-    "28. Other Inv Returned ($)", "29. Payment on A/P ($)", "30. Long Term Debt Written ($)",
-    "31. Long Term Debt Payment ($)", "32. Interest Rate A/R (%)", "33. Benefits: Life Ins (0/1)",
-    "34. Benefits: Health Ins (0/1)", "35. Third-Party Rx (0/1)", "36. Bid for HMO Contract ($)"
+    "1. Rx Markup (%)", "2. Rx Prof. Fee ($)", "3. Copay Discount ($)",
+    "4. Delivery (0/1)", "5. Pt. Records (0/1)", "6. Credit (0/1)",
+    "7. Hours Open/Week", "8. Promo Exp ($)", "9. % Promo Rx (%)",
+    "10. Curr. Invest ($)", "11. Invest Proj #", "12. Invest W/D ($)",
+    "13. W/D Proj #", "14. Markup Other (%)", "15. Rx Inv Purch ($)",
+    "16. Oth Inv Purch ($)", "17. # Pharmacists", "18. Pharm Wage ($)",
+    "19. # Clerks", "20. Clerk Wage ($)", "21. Mgr Salary ($)",
+    "22. Mgr % Time Rx", "23. Mgr Hrs/Week", "24. Mortgage ($)",
+    "25. Coll. Agency ($)", "26. Min Cash ($)", "27. Rx Return ($)",
+    "28. Oth Return ($)", "29. Pay A/P ($)", "30. Debt Written ($)",
+    "31. Debt Payment ($)", "32. Int Rate A/R (%)", "33. Ben: Life (0/1)",
+    "34. Ben: Health (0/1)", "35. 3rd Party (0/1)", "36. HMO Bid ($)"
 ]
 
 REPORT_COLUMNS = [
-    "Store Name", "LOCATION", "Net Profit", "ROI", 
-    "TOT SALES", "Rx SALES", "OTH SALES", "Rx Mkt Sh",
-    "Avg Rx Pr", "Rx Ing $", "Rx GM%", 
-    "Store Hrs", "A/P Paid", "M’age Pay", "E. Loan",
-    "Net Worth", "Cash Flow", "Cash", "Investments",
-    "Current", "Acid Test", "Turnover", "ROA", "G Margin", "Debt/NW"
+    "Net Profit", "TOT SALES", "Cash", "ROI", 
+    "Rx SALES", "OTH SALES", "Rx Mkt Sh", "Avg Rx Pr", 
+    "Store Hrs", "Net Worth", "Current", "Acid Test", "Turnover",
+    "G Margin", "Debt/NW", "Cash Flow"
 ]
 
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
@@ -59,84 +62,87 @@ DEFAULT_WEIGHTS = {
     "Shopping Center":   [40, 30, 15, 5,  0,  0, 5, 0, 5, 0]
 }
 
-# --- 4. INITIALIZATION ---
-def initialize_game(num_teams):
+# ==========================================
+# 2. STATE MANAGEMENT & INITIALIZATION
+# ==========================================
+
+def start_new_game(num_teams=5):
     st.session_state.players = {}
     st.session_state.global_period = 2 
+    st.session_state.game_active = True
     st.session_state.weights_df = pd.DataFrame(DEFAULT_WEIGHTS).set_index("Factor")
     
     for i in range(1, num_teams + 1):
         team_id = f"team_{i}"
+        store_name = f"Store {i}" # Generic Name
+        
+        # --- Pre-fill Inputs for Validation (Store 1 only) ---
         inputs = [0.0] * 36
-        # Defaults
-        inputs[0]=50.0; inputs[1]=3.0; inputs[6]=50.0; inputs[13]=45.0
-        inputs[17]=1; inputs[18]=25.0; inputs[19]=1; inputs[20]=10.0; 
-        inputs[21]=1500.0; inputs[23]=40.0
-        
-        store_name = f"Store {i}"
-        history = []
-        
-        # --- Config for ThaikritOsot (Corrected P2 Logic) ---
-        if i == 1:
-            store_name = "ThaikritOsot"
-            inputs[0] = 49.0; inputs[1] = 1.0; inputs[2] = 0.0
-            inputs[3] = 1.0; inputs[4] = 1.0; inputs[5] = 1.0
-            inputs[6] = 60.0; inputs[7] = 1000.0; inputs[8] = 60.0
-            inputs[9] = 0.0; inputs[10] = 0.0
-            inputs[13] = 47.0; inputs[14] = 40000.0; inputs[15] = 25000.0
-            inputs[17] = 1.0; inputs[18] = 21.0
-            inputs[19] = 1.5; inputs[20] = 4.75
-            inputs[21] = 8100.0; inputs[22] = 33.33; inputs[23] = 60.0
-            inputs[24] = 8200.0; inputs[26] = 1000.0
-            inputs[28] = 999999.0; inputs[29] = 10000.0 # Debt Written
-            inputs[31] = 2.0 # Interest Rate
-            inputs[32] = 1.0; inputs[33] = 1.0; inputs[34] = 1.0
+        if i == 1: 
+            # ใส่ค่า Input ของ Period 2 ตาม PDF ไว้ให้ (เพื่อให้คุณ Test Logic ได้ง่าย)
+            # แต่ชื่อร้านจะเป็น Store 1 (แก้เองได้)
+            inputs[0]=49.0; inputs[1]=1.0; inputs[2]=0.0
+            inputs[3]=1.0; inputs[4]=1.0; inputs[5]=1.0
+            inputs[6]=60.0; inputs[7]=1000.0; inputs[8]=60.0
+            inputs[9]=0.0; inputs[10]=0.0
+            inputs[13]=47.0; inputs[14]=40000.0; inputs[15]=25000.0
+            inputs[17]=1.0; inputs[18]=21.0
+            inputs[19]=1.5; inputs[20]=4.75
+            inputs[21]=8100.0; inputs[22]=33.33; inputs[23]=60.0
+            inputs[24]=8200.0; inputs[26]=1000.0
+            inputs[28]=999999.0; inputs[29]=10000.0 
+            inputs[31]=2.0 
+            inputs[32]=1.0; inputs[33]=1.0; inputs[34]=1.0
+        else:
+            # Default values for other stores
+            inputs[0]=50.0; inputs[1]=3.0; inputs[6]=50.0; inputs[13]=45.0
+            inputs[17]=1; inputs[18]=25.0; inputs[19]=1; inputs[20]=10.0; 
+            inputs[21]=1500.0; inputs[23]=40.0
 
-            # P1 History
-            p1_stats = {
-                "Store Name": "ThaikritOsot", "LOCATION": "Medical Center",
-                "Net Profit": 9848.0, "ROI": 7.0, 
-                "TOT SALES": 142312.0, "Rx SALES": 115752.0, "OTH SALES": 26560.0,
-                "Rx Mkt Sh": 12.5, "Avg Rx Pr": 19.61, "Rx Ing $": 11.23, "Rx GM%": 42.7,
-                "Store Hrs": 46.0, "A/P Paid": 20000.0, "E. Loan": 0.0,
-                "Net Worth": 138000.0, "Cash Flow": 5000.0, "Cash": 15000.0,
-                "Investments": 2000.0,
-                "Current": 2.40, "Acid Test": 1.16, "Turnover": 0.67,
-                "ROA": 3.0, "G Margin": 45.0, "Debt/NW": 1.17
-            }
-            history.append(p1_stats)
+        # --- Setup Period 1 History ---
+        financials = {
+            'cash': 15000.0, 'investments': 2000.0, 'acct_receivable': 45000.0,
+            'inventory_rx': 55000.0, 'inventory_otc': 25000.0,
+            'fixed_assets': 50000.0, 'acct_payable': 30000.0,
+            'notes_payable': 0.0, 'long_term_debt': 100000.0,
+            'retained_earnings': 138000.0
+        }
+
+        # Data ตาม PDF Period 1
+        p1_history = {
+            "Store Name": store_name, "LOCATION": "Not Selected",
+            "Net Profit": 9848.0, "ROI": 7.0, 
+            "TOT SALES": 142312.0, "Rx SALES": 115752.0, "OTH SALES": 26560.0,
+            "Rx Mkt Sh": 12.5, "Avg Rx Pr": 19.61, "Rx Ing $": 11.23, "Rx GM%": 42.7,
+            "Store Hrs": 46.0, "A/P Paid": 20000.0, "E. Loan": 0.0,
+            "Net Worth": 138000.0, "Cash Flow": 5000.0, "Cash": 15000.0,
+            "Investments": 2000.0,
+            "Current": 2.40, "Acid Test": 1.16, "Turnover": 0.67,
+            "ROA": 3.0, "G Margin": 45.0, "Debt/NW": 1.17
+        }
+        
+        # Override for Store 1 to match your test scenario (Medical Center)
+        if i == 1:
+            p1_history["LOCATION"] = "Medical Center"
 
         st.session_state.players[team_id] = {
             'shop_name': store_name,
-            'location_code': 1 if i == 1 else (i % 3) + 1,
+            'location_code': 1 if i == 1 else 0, 
             'status': 'Thinking',
             'period': 2,
             'inputs': inputs,
-            'financials': {
-                'cash': 15000.0 if i==1 else 10000.0,
-                'investments': 2000.0 if i==1 else 0.0,
-                'acct_receivable': 45000.0,
-                'inventory_rx': 55000.0, 
-                'inventory_otc': 25000.0,
-                'fixed_assets': 50000.0,
-                'acct_payable': 30000.0,
-                'notes_payable': 0.0,
-                'long_term_debt': 100000.0,
-                'retained_earnings': 138000.0 if i==1 else 100000.0
-            },
-            'prev_stats': { 
-                'avg_price': 19.61 if i==1 else 20.0, 
-                'mkt_share': 12.5 if i==1 else 20.0, 
-                'rx_per_hr': 5.0
-            },
-            'history': history
+            'financials': financials,
+            'prev_stats': { 'avg_price': 19.61, 'mkt_share': 12.5, 'rx_per_hr': 5.0 },
+            'history': [p1_history]
         }
 
 if 'players' not in st.session_state:
-    initialize_game(5)
+    start_new_game(5)
 
-# --- 5. LOGIC ENGINE ---
-def calculate_rank_scores(store_list, w_df):
+# ==========================================
+# 3. LOGIC ENGINE
+# ==========================================
+def calculate_results(store_list, w_df):
     data = []
     base_cost = 11.23; price_constant = 2.90
     for p in store_list:
@@ -161,155 +167,189 @@ def calculate_rank_scores(store_list, w_df):
     for index, row in df_ranks.iterrows():
         total_score = sum(row[f'r{i+1}'] * weights[i] for i in range(10))
         final_scores[row['id']] = total_score
-    return final_scores, base_cost, price_constant
+        
+    total_loc_score = sum(final_scores.values())
+    base_market_size = len(stores) * 6000 
+    
+    for s_data in stores:
+        tid = s_data['id']; p = s_data['p']; inp = p['inputs']; fin = p['financials']
+        my_score = final_scores[tid]
+        mkt_share = (my_score / total_loc_score) if total_loc_score else 0
+        rx_count = base_market_size * mkt_share
+        avg_rx_price = (base_cost * (1 + inp[0]/100)) + inp[1] + price_constant
+        rx_sales = rx_count * avg_rx_price
+        otc_ratio = 0.25 if loc_code == 1 else 0.45
+        otc_sales = rx_sales * otc_ratio * (1 + (inp[7]/5000)) * (1 + inp[13]/100)
+        tot_sales = rx_sales + otc_sales
+        cost_rx = rx_sales / (1 + (inp[0]/100))
+        cost_otc = otc_sales / (1 + (inp[13]/100))
+        req_ret_rx = min(inp[26], fin['inventory_rx'] * 0.25)
+        req_ret_otc = min(inp[27], fin['inventory_otc'] * 0.25)
+        fin['inventory_rx'] = max(0, (fin['inventory_rx'] + inp[14] - req_ret_rx) - cost_rx)
+        fin['inventory_otc'] = max(0, (fin['inventory_otc'] + inp[15] - req_ret_otc) - cost_otc)
+        tot_cogs = cost_rx + cost_otc; gross_margin = tot_sales - tot_cogs
+        hrs_open = inp[6]
+        wages = (inp[17]*inp[18] + inp[19]*inp[20]) * hrs_open * 13
+        if hrs_open > 40: wages *= 1.1
+        ben_rate = 0.05 if inp[32]==1 else 0
+        ben_rate += 0.15 if inp[33]==1 else 0
+        ben_cost = wages * ben_rate
+        fixed_ops = inp[21] + inp[24] + 3000
+        depr = fin['fixed_assets']*0.02
+        interest_exp = (fin['long_term_debt'] + fin['notes_payable']) * 0.025
+        ar_interest_income = (fin['acct_receivable'] * 0.5) * (inp[31] / 100)
+        tot_exp = wages + ben_cost + fixed_ops + inp[7] + depr + interest_exp
+        net_profit = gross_margin - tot_exp + ar_interest_income
+        pay_ap = min(inp[28], fin['acct_payable'])
+        debt_written = inp[29]
+        cash_in = (tot_sales * 0.9) + debt_written
+        cash_out = (tot_exp - depr) + inp[14] + inp[15] + inp[30] + pay_ap
+        fin['cash'] += (cash_in - cash_out)
+        fin['retained_earnings'] += net_profit
+        fin['long_term_debt'] += (debt_written - inp[30]) 
+        fin['acct_payable'] = max(0, fin['acct_payable'] - pay_ap + (inp[14]+inp[15])*0.5)
+        e_loan = 0
+        if fin['cash'] < 0:
+            e_loan = abs(fin['cash']) + 2000
+            fin['notes_payable'] += e_loan; fin['cash'] += e_loan
+        nw = fin['retained_earnings']
+        curr_assets = fin['cash'] + fin['investments'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['acct_receivable']
+        curr_liab = fin['acct_payable'] + fin['notes_payable']
+        
+        p['history'].append({
+            "Store Name": p['shop_name'], "LOCATION": LOC_MAP[p['location_code']],
+            "Net Profit": net_profit, "ROI": (net_profit/nw*100) if nw else 0,
+            "TOT SALES": tot_sales, "Rx SALES": rx_sales, "OTH SALES": otc_sales,
+            "Rx Mkt Sh": mkt_share * 100, "Avg Rx Pr": avg_rx_price,
+            "Store Hrs": hrs_open, "E. Loan": e_loan, 
+            "Net Worth": nw, "Cash Flow": cash_in - cash_out, "Cash": fin['cash'],
+            "Current": curr_assets/curr_liab if curr_liab else 0,
+            "Acid Test": (fin['cash'] + fin['acct_receivable']) / (curr_liab + 1),
+            "Turnover": tot_cogs / ((fin['inventory_rx']+fin['inventory_otc'])/2 + 1),
+            "ROA": (net_profit / (fin['fixed_assets'] + curr_assets)*100),
+            "G Margin": (gross_margin/tot_sales*100) if tot_sales else 0,
+            "Debt/NW": ((fin['long_term_debt'] + curr_liab) / nw) if nw else 0
+        })
+        p['prev_stats'] = {'avg_price': avg_rx_price, 'mkt_share': mkt_share*100, 'rx_per_hr': rx_count/(hrs_open*13)}
+        p['status'] = 'Thinking'; p['period'] += 1
 
-def process_period():
+def run_simulation_step():
     w_df = st.session_state.weights_df
     stores_by_loc = {1: [], 2: [], 3: []}
     for tid, p in st.session_state.players.items():
-        if p['status'] == 'Submitted' and p['location_code'] != 0:
+        if p['location_code'] != 0:
             stores_by_loc[p['location_code']].append({'id': tid, 'p': p})
-            
     for loc_code, stores in stores_by_loc.items():
-        if not stores: continue
-        rank_scores, base_cost, pr_const = calculate_rank_scores(stores, w_df)
-        total_loc_score = sum(rank_scores.values())
-        base_market_size = len(stores) * 6000 
-        
-        for s_data in stores:
-            tid = s_data['id']; p = s_data['p']; inp = p['inputs']; fin = p['financials']
-            my_score = rank_scores[tid]
-            mkt_share = (my_score / total_loc_score) if total_loc_score else 0
-            rx_count = base_market_size * mkt_share
-            avg_rx_price = (base_cost * (1 + inp[0]/100)) + inp[1] + pr_const
-            rx_sales = rx_count * avg_rx_price
-            otc_ratio = 0.25 if loc_code == 1 else 0.45
-            otc_sales = rx_sales * otc_ratio * (1 + (inp[7]/5000)) * (1 + inp[13]/100)
-            tot_sales = rx_sales + otc_sales
-            cost_rx = rx_sales / (1 + (inp[0]/100))
-            cost_otc = otc_sales / (1 + (inp[13]/100))
-            req_ret_rx = min(inp[26], fin['inventory_rx'] * 0.25)
-            req_ret_otc = min(inp[27], fin['inventory_otc'] * 0.25)
-            fin['inventory_rx'] = max(0, (fin['inventory_rx'] + inp[14] - req_ret_rx) - cost_rx)
-            fin['inventory_otc'] = max(0, (fin['inventory_otc'] + inp[15] - req_ret_otc) - cost_otc)
-            tot_cogs = cost_rx + cost_otc; gross_margin = tot_sales - tot_cogs
-            hrs_open = inp[6]
-            wages = (inp[17]*inp[18] + inp[19]*inp[20]) * hrs_open * 13
-            if hrs_open > 40: wages *= 1.1
-            ben_rate = 0.05 if inp[32]==1 else 0
-            ben_rate += 0.15 if inp[33]==1 else 0
-            ben_cost = wages * ben_rate
-            fixed_ops = inp[21] + inp[24] + 3000
-            depr = fin['fixed_assets']*0.02
-            interest_exp = (fin['long_term_debt'] + fin['notes_payable']) * 0.025
-            ar_interest_income = (fin['acct_receivable'] * 0.5) * (inp[31] / 100)
-            tot_exp = wages + ben_cost + fixed_ops + inp[7] + depr + interest_exp
-            net_profit = gross_margin - tot_exp + ar_interest_income
-            pay_ap = min(inp[28], fin['acct_payable'])
-            debt_written = inp[29]
-            cash_in = (tot_sales * 0.9) + debt_written
-            cash_out = (tot_exp - depr) + inp[14] + inp[15] + inp[30] + pay_ap
-            fin['cash'] += (cash_in - cash_out)
-            fin['retained_earnings'] += net_profit
-            fin['long_term_debt'] += (debt_written - inp[30]) 
-            fin['acct_payable'] = max(0, fin['acct_payable'] - pay_ap + (inp[14]+inp[15])*0.5)
-            e_loan = 0
-            if fin['cash'] < 0:
-                e_loan = abs(fin['cash']) + 2000
-                fin['notes_payable'] += e_loan; fin['cash'] += e_loan
-
-            nw = fin['retained_earnings']
-            curr_assets = fin['cash'] + fin['investments'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['acct_receivable']
-            curr_liab = fin['acct_payable'] + fin['notes_payable']
-
-            p['history'].append({
-                "Store Name": p['shop_name'], "LOCATION": LOC_MAP[p['location_code']],
-                "Net Profit": net_profit, "ROI": (net_profit/nw*100) if nw else 0,
-                "TOT SALES": tot_sales, "Rx SALES": rx_sales, "OTH SALES": otc_sales,
-                "Rx Mkt Sh": mkt_share * 100, "Avg Rx Pr": avg_rx_price,
-                "Rx Ing $": base_cost, "Rx GM%": (rx_sales - cost_rx)/rx_sales*100 if rx_sales else 0,
-                "Store Hrs": hrs_open, "E. Loan": e_loan, "Investments": fin['investments'],
-                "Net Worth": nw, "Cash Flow": cash_in - cash_out, "Cash": fin['cash'],
-                "Current": curr_assets/curr_liab if curr_liab else 0,
-                "Acid Test": (fin['cash'] + fin['acct_receivable']) / (curr_liab + 1),
-                "Turnover": tot_cogs / ((fin['inventory_rx']+fin['inventory_otc'])/2 + 1),
-                "ROA": (net_profit / (fin['fixed_assets'] + curr_assets)*100),
-                "G Margin": (gross_margin / tot_sales*100) if tot_sales else 0,
-                "Debt/NW": ((fin['long_term_debt'] + curr_liab) / nw) if nw else 0
-            })
-            p['prev_stats'] = {'avg_price': avg_rx_price, 'mkt_share': mkt_share*100, 'rx_per_hr': rx_count/(hrs_open*13)}
-            p['status'] = 'Thinking'; p['period'] = p.get('period', 1) + 1
+        if stores: calculate_results(stores, w_df)
     st.session_state.global_period += 1
 
-# --- 6. UI RENDER (CLASSIC TABBED STYLE) ---
+# ==========================================
+# 4. USER INTERFACE
+# ==========================================
 with st.sidebar:
     st.title("💊 Communi-Pharm")
-    st.caption("Classic Mode (V10.0 UI / V10.5 Logic)")
     role = st.selectbox("Select Role", ["Student", "Instructor"])
+    st.markdown("---")
     
     if role == "Instructor":
         pwd = st.text_input("Password", type="password")
         if pwd == ADMIN_PASSWORD:
+            st.success("Authorized")
+            if st.button("🔄 New Game / Reset", type="primary"):
+                start_new_game(5)
+                st.rerun()
             st.markdown("---")
-            if st.button("🚀 Run Simulation", type="primary"): process_period(); st.rerun()
-            if st.button("⚠️ Reset Game"): initialize_game(5); st.rerun()
+            ready = sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')
+            st.metric("Ready Teams", f"{ready}/{len(st.session_state.players)}")
+            if st.button("🚀 Run Period"):
+                run_simulation_step()
+                st.success("Processed!")
+                st.rerun()
+    else:
+        if st.button("🔄 Reset My Test"):
+            start_new_game(5)
+            st.rerun()
 
 if role == "Student":
     if st.session_state.players:
         t_ids = list(st.session_state.players.keys())
-        sel_id = st.selectbox("Your Store", t_ids, format_func=lambda x: st.session_state.players[x]['shop_name'])
+        sel_id = st.selectbox("Select Your Team", t_ids, format_func=lambda x: st.session_state.players[x]['shop_name'])
         p = st.session_state.players[sel_id]
+
+        # --- STORE SETUP (RENAME) SECTION ---
+        # ให้ Student ตั้งชื่อและเลือก Location ได้ตอน Period 2
+        if p['period'] == 2 and p['status'] == 'Thinking':
+            st.info("👋 Welcome! Please set up your store details before starting.")
+            with st.container():
+                c1, c2 = st.columns(2)
+                # Store Name Input
+                new_name = c1.text_input("📛 Store Name", p['shop_name'])
+                if new_name != p['shop_name']:
+                    p['shop_name'] = new_name
+                    st.rerun()
+                
+                # Location Input
+                loc_idx = c2.selectbox("📍 Location", [0,1,2,3], format_func=lambda x: LOC_MAP[x], index=p['location_code'])
+                if loc_idx != p['location_code']:
+                    p['location_code'] = loc_idx
+                    st.rerun()
+            st.markdown("---")
+
+        st.title(f"🏥 {p['shop_name']}")
+        st.caption(f"Location: {LOC_MAP[p['location_code']]} | Period: {st.session_state.global_period} | Status: {p['status']}")
         
-        st.header(f"🏥 {p['shop_name']} (Period {st.session_state.global_period})")
-        
-        # --- CLASSIC TABS ---
-        tab1, tab2 = st.tabs(["📝 Decision Form (Inputs)", "📊 Financial Reports"])
+        tab1, tab2 = st.tabs(["📝 Decisions (Inputs)", "📊 Financial Report (History)"])
         
         with tab1:
+            st.subheader(f"Decisions for Period {p['period']}")
             if p['status'] == 'Thinking':
-                st.info("Enter your decisions for the upcoming period.")
-                with st.form("classic_form"):
-                    cols = st.columns(3) # 3-Column Grid for Inputs
+                with st.form("input_form"):
+                    cols = st.columns(3)
                     for i in range(36):
                         with cols[i%3]:
-                            if i in [3,4,5,32,33,34]: 
-                                p['inputs'][i] = st.selectbox(INPUT_LABELS[i], [0,1], index=int(p['inputs'][i]))
-                            else: 
-                                p['inputs'][i] = st.number_input(INPUT_LABELS[i], value=float(p['inputs'][i]))
-                    
+                            label = INPUT_LABELS[i].split('(')[0]
+                            val = float(p['inputs'][i])
+                            if i in [3,4,5,32,33,34]:
+                                p['inputs'][i] = st.selectbox(f"{i+1}. {label}", [0,1], index=int(val))
+                            else:
+                                p['inputs'][i] = st.number_input(f"{i+1}. {label}", value=val)
                     st.markdown("---")
                     if st.form_submit_button("✅ Submit Decisions", type="primary"):
                         p['status'] = 'Submitted'
                         st.rerun()
             else:
-                st.success("Decisions have been submitted successfully.")
-                st.write("Waiting for the instructor to process the period.")
+                st.success("Submitted! Waiting for Instructor.")
                 if st.button("Edit Decisions"):
                     p['status'] = 'Thinking'
                     st.rerun()
-        
+
         with tab2:
+            st.subheader("Performance History")
             if p['history']:
                 last = p['history'][-1]
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Net Profit", f"${last['Net Profit']:,.0f}")
-                m2.metric("Total Sales", f"${last['TOT SALES']:,.0f}")
+                m2.metric("Sales", f"${last['TOT SALES']:,.0f}")
                 m3.metric("Cash", f"${last['Cash']:,.0f}")
                 m4.metric("ROI", f"{last['ROI']:.2f}%")
-                
-                st.write(f"### Results for Period {p['period']-1}")
-                df_res = pd.DataFrame(list(last.items()), columns=["Metric", "Value"])
-                df_res = df_res[df_res['Metric'].isin(REPORT_COLUMNS)]
-                st.dataframe(df_res, use_container_width=True, height=600)
+                st.markdown("---")
+                df_hist = pd.DataFrame(p['history'])
+                display_cols = [c for c in REPORT_COLUMNS if c in df_hist.columns]
+                st.dataframe(df_hist[display_cols].T.style.format("{:,.2f}"), use_container_width=True, height=600)
             else:
-                st.info("No reports available yet. Submit Period 1 decisions to begin.")
+                st.info("No history available.")
 
 elif role == "Instructor" and pwd == ADMIN_PASSWORD:
-    st.title("Instructor Dashboard")
-    rows = [p['history'][-1] for p in st.session_state.players.values() if p['history']]
-    if rows:
-        st.write("### 🏆 Current Standings")
-        df = pd.DataFrame(rows).sort_values("Net Profit", ascending=False)
-        st.dataframe(df[REPORT_COLUMNS].style.format(precision=2), use_container_width=True)
-    else:
-        st.info("No data yet.")
+    st.header("👨‍🏫 Instructor Dashboard")
+    tab_conf, tab_res = st.tabs(["⚙️ Configuration", "🏆 Results"])
+    with tab_conf:
+        st.write("### Simulation Weights")
+        st.session_state.weights_df = st.data_editor(st.session_state.weights_df, use_container_width=True)
+    with tab_res:
+        st.write("### Current Standings")
+        rows = [p['history'][-1] for p in st.session_state.players.values() if p['history']]
+        if rows:
+            df = pd.DataFrame(rows).sort_values("Net Profit", ascending=False)
+            st.dataframe(df[REPORT_COLUMNS].style.format("{:,.2f}"), use_container_width=True)
+        else:
+            st.info("No results yet.")
