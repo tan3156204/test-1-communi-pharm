@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# --- 1. CONFIG MUST BE FIRST ---
+# --- 1. CONFIG MUST BE FIRST (ต้องอยู่บรรทัดแรกสุดเสมอ) ---
 st.set_page_config(
     page_title="Communi-Pharm V10.5", 
     layout="wide", 
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed" # หุบ Sidebar เพื่อให้มีพื้นที่กว้างขึ้น
 )
 
-# --- 2. CSS FOR FULL WIDTH ---
+# --- 2. CSS FOR FULL WIDTH & INPUT ALIGNMENT ---
 st.markdown("""
 <style>
     .reportview-container .main .block-container {
@@ -18,8 +18,14 @@ st.markdown("""
     }
     .block-container {
         padding-top: 1rem !important;
-        padding-bottom: 1rem !important;
+        padding-bottom: 2rem !important;
         max-width: 98% !important;
+    }
+    /* ปรับให้ Header ของ Input ดูเด่นขึ้น */
+    div[data-testid="stForm"] {
+        border: 2px solid #f0f2f6;
+        padding: 20px;
+        border-radius: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -28,22 +34,22 @@ st.markdown("""
 ADMIN_PASSWORD = "admin"
 
 INPUT_LABELS = [
-    "1. Prescription Markup (%)", "2. Prescription Professional Fee ($)", "3. Copayment Discount ($)",
-    "4. Delivery Service (0=No, 1=Yes)", "5. Patient Records (0=No, 1=Yes)", "6. Store Offers Credit (0=No, 1=Yes)",
-    "7. Hours Pharmacy Open Per Week", "8. Promotional Expenditures ($)", "9. % Promotion on Rx Dept (%)",
-    "10. Current Period’s Investment ($)", "11. Investment Project Number", "12. Investment Withdrawal ($)",
-    "13. Investment Withdrawal Project Number", "14. Markup on Other Items (%)", "15. Prescription Inv Purchases ($)",
-    "16. Other Inv Purchases ($)", "17. Number Pharmacists", "18. Pharmacist’s Hourly Pay ($)",
-    "19. Number Sales Clerks", "20. Sales Clerk’s Hourly Pay ($)", "21. Manager’s Salary ($)",
-    "22. Manager’s % Time Rx", "23. Manager Hours/Week", "24. Mortgage Payment ($)",
-    "25. Collection Agency ($)", "26. Minimum Cash Balance ($)", "27. Rx Inv Returned ($)",
-    "28. Other Inv Returned ($)", "29. Payment on A/P ($)", "30. Long Term Debt Written ($)",
-    "31. Long Term Debt Payment ($)", "32. Interest Rate A/R (%)", "33. Benefits: Life Ins (0/1)",
-    "34. Benefits: Health Ins (0/1)", "35. Third-Party Rx (0/1)", "36. Bid for HMO Contract ($)"
+    "1. Rx Markup (%)", "2. Rx Prof. Fee ($)", "3. Copay Discount ($)",
+    "4. Delivery (0/1)", "5. Pt. Records (0/1)", "6. Credit (0/1)",
+    "7. Hours Open/Week", "8. Promo Exp ($)", "9. % Promo Rx (%)",
+    "10. Curr. Invest ($)", "11. Invest Proj #", "12. Invest W/D ($)",
+    "13. W/D Proj #", "14. Markup Other (%)", "15. Rx Inv Purch ($)",
+    "16. Oth Inv Purch ($)", "17. # Pharmacists", "18. Pharm Wage ($)",
+    "19. # Clerks", "20. Clerk Wage ($)", "21. Mgr Salary ($)",
+    "22. Mgr % Time Rx", "23. Mgr Hrs/Week", "24. Mortgage ($)",
+    "25. Coll. Agency ($)", "26. Min Cash ($)", "27. Rx Return ($)",
+    "28. Oth Return ($)", "29. Pay A/P ($)", "30. Debt Written ($)",
+    "31. Debt Payment ($)", "32. Int Rate A/R (%)", "33. Ben: Life (0/1)",
+    "34. Ben: Health (0/1)", "35. 3rd Party (0/1)", "36. HMO Bid ($)"
 ]
 
 REPORT_COLUMNS = [
-    "Rank", "Store Name", "LOCATION", "Net Profit", "ROI", 
+    "Store Name", "LOCATION", "Net Profit", "ROI", 
     "TOT SALES", "Rx SALES", "OTH SALES", "Rx Mkt Sh",
     "Avg Rx Pr", "Rx Ing $", "Rx GM%", 
     "Store Hrs", "A/P Paid", "M’age Pay", "E. Loan",
@@ -73,7 +79,6 @@ def initialize_game(num_teams):
     
     for i in range(1, num_teams + 1):
         team_id = f"team_{i}"
-        
         inputs = [0.0] * 36
         # Defaults
         inputs[0]=50.0; inputs[1]=3.0; inputs[6]=50.0; inputs[13]=45.0
@@ -83,10 +88,8 @@ def initialize_game(num_teams):
         store_name = f"Store {i}"
         history = []
         
-        # --- Config for ThaikritOsot ---
         if i == 1:
             store_name = "ThaikritOsot"
-            # Corrected Inputs Period 2
             inputs[0] = 49.0; inputs[1] = 1.0; inputs[2] = 0.0
             inputs[3] = 1.0; inputs[4] = 1.0; inputs[5] = 1.0
             inputs[6] = 60.0; inputs[7] = 1000.0; inputs[8] = 60.0
@@ -100,7 +103,6 @@ def initialize_game(num_teams):
             inputs[31] = 2.0 
             inputs[32] = 1.0; inputs[33] = 1.0; inputs[34] = 1.0
 
-            # Period 1 History
             p1_stats = {
                 "Store Name": "ThaikritOsot", "LOCATION": "Medical Center",
                 "Net Profit": 9848.0, "ROI": 7.0, 
@@ -293,60 +295,114 @@ def process_period():
 
     st.session_state.global_period += 1
 
-# --- 6. UI RENDER ---
+# --- 6. UI RENDER (ปรับปรุงใหม่: แบ่งจอ ซ้าย/ขวา) ---
 with st.sidebar:
     st.title("💊 Communi-Pharm")
-    role = st.selectbox("Role", ["Student", "Instructor"])
+    role = st.selectbox("Select Role", ["Student", "Instructor"])
     
     if role == "Instructor":
-        pwd = st.text_input("Admin Password", type="password")
+        pwd = st.text_input("Password", type="password")
         if pwd == ADMIN_PASSWORD:
-            st.markdown("---")
-            if st.button("⚠️ Reset Game", type="primary"):
+            if st.button("Run Simulation", type="primary"):
+                process_period(); st.rerun()
+            if st.button("Reset Game"):
                 initialize_game(5); st.rerun()
-    
-    elif role == "Student":
-        if st.session_state.players:
-            t_ids = list(st.session_state.players.keys())
-            sel_id = st.selectbox("Your Store", t_ids, format_func=lambda x: st.session_state.players[x]['shop_name'])
-            p = st.session_state.players[sel_id]
-            st.info(f"Store: {p['shop_name']} | Location: {LOC_MAP[p['location_code']]}")
-            
-            if p['status'] == 'Thinking':
-                st.write(f"### 📝 Decisions for Period {st.session_state.global_period}")
-                st.caption("Inputs pre-loaded.")
-                with st.form("inputs"):
-                    cols = st.columns(3) 
-                    for i in range(36):
-                        with cols[i%3]:
-                            if i in [3,4,5,32,33,34]: p['inputs'][i] = st.selectbox(INPUT_LABELS[i], [0,1], index=int(p['inputs'][i]))
-                            else: p['inputs'][i] = st.number_input(INPUT_LABELS[i], value=float(p['inputs'][i]))
-                    if st.form_submit_button("✅ Submit"): p['status']='Submitted'; st.rerun()
-            else:
-                st.success("Submitted. Waiting for Instructor.")
-                if st.button("Edit"): p['status']='Thinking'; st.rerun()
 
+# --- MAIN CONTENT AREA ---
+if role == "Student":
+    if st.session_state.players:
+        # เลือก Team ด้านบนสุด เพื่อไม่ให้กินที่
+        t_ids = list(st.session_state.players.keys())
+        col_top1, col_top2 = st.columns([1, 4])
+        with col_top1:
+            sel_id = st.selectbox("Select Your Store", t_ids, format_func=lambda x: st.session_state.players[x]['shop_name'])
+        
+        p = st.session_state.players[sel_id]
+        
+        # --- แบ่งหน้าจอเป็น 2 ส่วน: ซ้าย (History) | ขวา (Inputs) ---
+        col_left, col_right = st.columns([1.4, 1], gap="large") 
+
+        # === LEFT COLUMN: HISTORY & RESULTS ===
+        with col_left:
+            st.header(f"📊 {p['shop_name']}")
+            st.caption(f"Location: {LOC_MAP[p['location_code']]} | Status: {p['status']}")
+            
             if p['history']:
-                st.markdown("---")
-                st.write(f"### 📊 History (Last: Period {p['period']-1})")
                 last = p['history'][-1]
-                m1,m2,m3,m4 = st.columns(4)
-                m1.metric("Total Sales", f"${last['TOT SALES']:,.0f}")
-                m2.metric("Net Profit", f"${last['Net Profit']:,.0f}")
-                m3.metric("Cash", f"${last['Cash']:,.0f}")
-                m4.metric("Debt/NW", f"{last['Debt/NW']:.2f}")
                 
+                # แสดง Metric สำคัญ 4 ตัวบน
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Net Profit", f"${last['Net Profit']:,.0f}")
+                m2.metric("Total Sales", f"${last['TOT SALES']:,.0f}")
+                m3.metric("Cash", f"${last['Cash']:,.0f}")
+                m4.metric("ROI", f"{last['ROI']:.1f}%")
+                
+                st.divider()
+                
+                # แสดงตารางผลลัพธ์
+                st.subheader(f"Results for Period {p['period']-1}")
                 df_res = pd.DataFrame(list(last.items()), columns=["Metric", "Value"])
                 df_res = df_res[df_res['Metric'].isin(REPORT_COLUMNS)]
-                st.dataframe(df_res, use_container_width=True, height=600)
+                
+                # ปรับแต่งตารางให้ดูง่าย
+                st.dataframe(
+                    df_res.style.format(precision=2), 
+                    use_container_width=True, 
+                    height=600,
+                    hide_index=True
+                )
+            else:
+                st.info("Waiting for Period 1 results...")
 
-if role == "Instructor" and pwd == ADMIN_PASSWORD:
-    st.title(f"👨‍🏫 Instructor Control (Period {st.session_state.global_period})")
-    if st.button("🚀 Run Simulation"):
-        process_period(); st.rerun()
-    
+        # === RIGHT COLUMN: INPUT DECISIONS ===
+        with col_right:
+            if p['status'] == 'Thinking':
+                st.write(f"### 📝 Decisions: Period {st.session_state.global_period}")
+                st.caption("Please update your inputs on the right.")
+                
+                with st.form("decision_form"):
+                    # แบ่งเป็น 2 คอลัมน์ย่อยภายใน Form เพื่อให้ไม่ยาวเกินไป
+                    ic1, ic2 = st.columns(2)
+                    
+                    for i in range(36):
+                        # สลับลงคอลัมน์ซ้าย/ขวา
+                        target_col = ic1 if i % 2 == 0 else ic2
+                        with target_col:
+                            label = INPUT_LABELS[i]
+                            # ตัดข้อความให้สั้นลงใน Label
+                            short_label = label.split('(')[0].strip()[:20] + "..." if len(label) > 25 else label
+                            
+                            if i in [3,4,5,32,33,34]: # Boolean inputs
+                                p['inputs'][i] = st.selectbox(
+                                    short_label, 
+                                    [0,1], 
+                                    index=int(p['inputs'][i]),
+                                    key=f"in_{i}"
+                                )
+                            else: # Numeric inputs
+                                p['inputs'][i] = st.number_input(
+                                    short_label, 
+                                    value=float(p['inputs'][i]),
+                                    key=f"in_{i}"
+                                )
+                    
+                    st.markdown("---")
+                    submitted = st.form_submit_button("✅ Submit Decisions", type="primary", use_container_width=True)
+                    if submitted:
+                        p['status'] = 'Submitted'
+                        st.rerun()
+            else:
+                st.success("Decisions Submitted!")
+                st.write("Waiting for instructor to process results.")
+                if st.button("Edit Decisions"):
+                    p['status'] = 'Thinking'
+                    st.rerun()
+
+elif role == "Instructor" and pwd == ADMIN_PASSWORD:
+    st.title("👨‍🏫 Instructor Dashboard")
     rows = [p['history'][-1] for p in st.session_state.players.values() if p['history']]
     if rows:
-        st.write("### 🏆 Leaderboard")
         df = pd.DataFrame(rows).sort_values("Net Profit", ascending=False)
         st.dataframe(df[REPORT_COLUMNS].style.format(precision=2), use_container_width=True)
+    else:
+        st.info("No data available yet.")
