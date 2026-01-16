@@ -349,7 +349,6 @@ with st.sidebar:
                 m2.metric("Net Profit", f"${last['Net Profit']:,.0f}")
                 m3.metric("Cash", f"${last['Cash']:,.0f}")
                 m4.metric("Debt/NW", f"{last['Debt/NW']:.2f}")
-                
                 df_res = pd.DataFrame(list(last.items()), columns=["Metric", "Value"])
                 df_res = df_res[df_res['Metric'].isin(REPORT_COLUMNS)]
                 # Use container width to fill the screen
@@ -365,3 +364,4 @@ if role == "Instructor" and pwd == ADMIN_PASSWORD:
         st.write("### 🏆 Leaderboard")
         df = pd.DataFrame(rows).sort_values("Net Profit", ascending=False)
         st.dataframe(df[REPORT_COLUMNS].style.format(precision=2), use_container_width=True)
+        
