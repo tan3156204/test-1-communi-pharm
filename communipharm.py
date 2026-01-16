@@ -2,38 +2,31 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# ==========================================
-# 1. System Config & Full Screen Setup
-# ==========================================
+# --- 1. CONFIG MUST BE FIRST ---
 st.set_page_config(
-    page_title="Communi-Pharm V10.5 (Full Screen)", 
+    page_title="Communi-Pharm V10.5", 
     layout="wide", 
     initial_sidebar_state="expanded"
 )
 
-# --- CSS Hack to Force Full Screen & Remove Margins ---
+# --- 2. CSS FOR FULL WIDTH ---
 st.markdown("""
 <style>
-    /* ขยายพื้นที่แสดงผลให้เต็มจอจริงๆ */
     .reportview-container .main .block-container {
         max-width: 100%;
-        padding-top: 1rem;
-        padding-right: 1rem;
-        padding-left: 1rem;
-        padding-bottom: 1rem;
+        padding: 1rem;
     }
-    /* ลด Padding ด้านบนเพื่อไม่ให้เสียพื้นที่ */
     .block-container {
         padding-top: 1rem !important;
         padding-bottom: 1rem !important;
-        max-width: 95% !important; /* ปรับให้กว้างเกือบสุดขอบ */
+        max-width: 98% !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
+# --- 3. VARIABLES & CONSTANTS ---
 ADMIN_PASSWORD = "admin"
 
-# List of all 36 Inputs
 INPUT_LABELS = [
     "1. Prescription Markup (%)", "2. Prescription Professional Fee ($)", "3. Copayment Discount ($)",
     "4. Delivery Service (0=No, 1=Yes)", "5. Patient Records (0=No, 1=Yes)", "6. Store Offers Credit (0=No, 1=Yes)",
@@ -72,9 +65,7 @@ DEFAULT_WEIGHTS = {
     "Shopping Center":   [40, 30, 15, 5,  0,  0, 5, 0, 5, 0]
 }
 
-# ==========================================
-# 2. Initialization & Pre-loading Inputs
-# ==========================================
+# --- 4. INITIALIZATION ---
 def initialize_game(num_teams):
     st.session_state.players = {}
     st.session_state.global_period = 2 
@@ -84,7 +75,7 @@ def initialize_game(num_teams):
         team_id = f"team_{i}"
         
         inputs = [0.0] * 36
-        # Defaults for other teams
+        # Defaults
         inputs[0]=50.0; inputs[1]=3.0; inputs[6]=50.0; inputs[13]=45.0
         inputs[17]=1; inputs[18]=25.0; inputs[19]=1; inputs[20]=10.0; 
         inputs[21]=1500.0; inputs[23]=40.0
@@ -92,11 +83,10 @@ def initialize_game(num_teams):
         store_name = f"Store {i}"
         history = []
         
-        # --- Store 1: ThaikritOsot Configuration ---
+        # --- Config for ThaikritOsot ---
         if i == 1:
             store_name = "ThaikritOsot"
-            
-            # === CORRECTED INPUTS FOR PERIOD 2 ===
+            # Corrected Inputs Period 2
             inputs[0] = 49.0; inputs[1] = 1.0; inputs[2] = 0.0
             inputs[3] = 1.0; inputs[4] = 1.0; inputs[5] = 1.0
             inputs[6] = 60.0; inputs[7] = 1000.0; inputs[8] = 60.0
@@ -106,11 +96,11 @@ def initialize_game(num_teams):
             inputs[19] = 1.5; inputs[20] = 4.75
             inputs[21] = 8100.0; inputs[22] = 33.33; inputs[23] = 60.0
             inputs[24] = 8200.0; inputs[26] = 1000.0
-            inputs[28] = 999999.0; inputs[29] = 10000.0 # Debt Written
-            inputs[31] = 2.0 # Interest Rate
+            inputs[28] = 999999.0; inputs[29] = 10000.0 
+            inputs[31] = 2.0 
             inputs[32] = 1.0; inputs[33] = 1.0; inputs[34] = 1.0
 
-            # --- Period 1 History ---
+            # Period 1 History
             p1_stats = {
                 "Store Name": "ThaikritOsot", "LOCATION": "Medical Center",
                 "Net Profit": 9848.0, "ROI": 7.0, 
@@ -153,9 +143,7 @@ def initialize_game(num_teams):
 if 'players' not in st.session_state:
     initialize_game(5)
 
-# ==========================================
-# 3. Logic Engine
-# ==========================================
+# --- 5. LOGIC ENGINE ---
 def calculate_rank_scores(store_list, w_df):
     data = []
     base_cost = 11.23 
@@ -305,9 +293,7 @@ def process_period():
 
     st.session_state.global_period += 1
 
-# ==========================================
-# 4. UI Display
-# ==========================================
+# --- 6. UI RENDER ---
 with st.sidebar:
     st.title("💊 Communi-Pharm")
     role = st.selectbox("Role", ["Student", "Instructor"])
@@ -330,7 +316,7 @@ with st.sidebar:
                 st.write(f"### 📝 Decisions for Period {st.session_state.global_period}")
                 st.caption("Inputs pre-loaded.")
                 with st.form("inputs"):
-                    cols = st.columns(3) # Grid Layout for Inputs
+                    cols = st.columns(3) 
                     for i in range(36):
                         with cols[i%3]:
                             if i in [3,4,5,32,33,34]: p['inputs'][i] = st.selectbox(INPUT_LABELS[i], [0,1], index=int(p['inputs'][i]))
@@ -349,9 +335,9 @@ with st.sidebar:
                 m2.metric("Net Profit", f"${last['Net Profit']:,.0f}")
                 m3.metric("Cash", f"${last['Cash']:,.0f}")
                 m4.metric("Debt/NW", f"{last['Debt/NW']:.2f}")
+                
                 df_res = pd.DataFrame(list(last.items()), columns=["Metric", "Value"])
                 df_res = df_res[df_res['Metric'].isin(REPORT_COLUMNS)]
-                # Use container width to fill the screen
                 st.dataframe(df_res, use_container_width=True, height=600)
 
 if role == "Instructor" and pwd == ADMIN_PASSWORD:
@@ -364,4 +350,3 @@ if role == "Instructor" and pwd == ADMIN_PASSWORD:
         st.write("### 🏆 Leaderboard")
         df = pd.DataFrame(rows).sort_values("Net Profit", ascending=False)
         st.dataframe(df[REPORT_COLUMNS].style.format(precision=2), use_container_width=True)
-        
