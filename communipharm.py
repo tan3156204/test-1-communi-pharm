@@ -15,12 +15,7 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #f0f2f6; border-radius: 5px; }
     .stTabs [aria-selected="true"] { background-color: #e6f3ff; border: 1px solid #2980b9; }
-    /* Highlight Store Setup Box */
-    div[data-testid="stExpander"] {
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        background-color: #f9f9f9;
-    }
+    div[data-testid="stExpander"] { border: 1px solid #ddd; border-radius: 8px; background-color: #f9f9f9; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -66,21 +61,21 @@ DEFAULT_WEIGHTS = {
 # 2. STATE MANAGEMENT & INITIALIZATION
 # ==========================================
 
-def start_new_game(num_teams=5):
+def start_new_game(num_teams):
     st.session_state.players = {}
     st.session_state.global_period = 2 
     st.session_state.game_active = True
     st.session_state.weights_df = pd.DataFrame(DEFAULT_WEIGHTS).set_index("Factor")
     
+    # Loop create team ตามจำนวนที่กำหนด (1-7)
     for i in range(1, num_teams + 1):
         team_id = f"team_{i}"
-        store_name = f"Store {i}" # Generic Name
+        store_name = f"Store {i}" 
         
         # --- Pre-fill Inputs for Validation (Store 1 only) ---
         inputs = [0.0] * 36
         if i == 1: 
-            # ใส่ค่า Input ของ Period 2 ตาม PDF ไว้ให้ (เพื่อให้คุณ Test Logic ได้ง่าย)
-            # แต่ชื่อร้านจะเป็น Store 1 (แก้เองได้)
+            # Store 1: ใส่ค่า Validate ตาม PDF ไว้ให้ test
             inputs[0]=49.0; inputs[1]=1.0; inputs[2]=0.0
             inputs[3]=1.0; inputs[4]=1.0; inputs[5]=1.0
             inputs[6]=60.0; inputs[7]=1000.0; inputs[8]=60.0
@@ -108,7 +103,6 @@ def start_new_game(num_teams=5):
             'retained_earnings': 138000.0
         }
 
-        # Data ตาม PDF Period 1
         p1_history = {
             "Store Name": store_name, "LOCATION": "Not Selected",
             "Net Profit": 9848.0, "ROI": 7.0, 
@@ -121,7 +115,6 @@ def start_new_game(num_teams=5):
             "ROA": 3.0, "G Margin": 45.0, "Debt/NW": 1.17
         }
         
-        # Override for Store 1 to match your test scenario (Medical Center)
         if i == 1:
             p1_history["LOCATION"] = "Medical Center"
 
@@ -136,6 +129,7 @@ def start_new_game(num_teams=5):
             'history': [p1_history]
         }
 
+# Default Start 5 Teams
 if 'players' not in st.session_state:
     start_new_game(5)
 
@@ -255,12 +249,20 @@ with st.sidebar:
         pwd = st.text_input("Password", type="password")
         if pwd == ADMIN_PASSWORD:
             st.success("Authorized")
+            
+            # --- New Feature: Team Count Setting ---
+            st.markdown("### ⚙️ Game Settings")
+            num_teams = st.number_input("Number of Teams", min_value=1, max_value=7, value=5, step=1)
+            
             if st.button("🔄 New Game / Reset", type="primary"):
-                start_new_game(5)
+                start_new_game(num_teams)
                 st.rerun()
+                
             st.markdown("---")
             ready = sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')
+            st.write(f"**Period:** {st.session_state.global_period}")
             st.metric("Ready Teams", f"{ready}/{len(st.session_state.players)}")
+            
             if st.button("🚀 Run Period"):
                 run_simulation_step()
                 st.success("Processed!")
@@ -277,7 +279,6 @@ if role == "Student":
         p = st.session_state.players[sel_id]
 
         # --- STORE SETUP (RENAME) SECTION ---
-        # ให้ Student ตั้งชื่อและเลือก Location ได้ตอน Period 2
         if p['period'] == 2 and p['status'] == 'Thinking':
             st.info("👋 Welcome! Please set up your store details before starting.")
             with st.container():
