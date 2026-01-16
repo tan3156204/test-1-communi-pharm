@@ -3,12 +3,11 @@ import pandas as pd
 import numpy as np
 
 # ==========================================
-# 1. System Configuration
+# 1. System Config
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V10.3 (Calibrated)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V10.5 (Corrected P2)", layout="wide")
 ADMIN_PASSWORD = "admin"
 
-# Labels
 INPUT_LABELS = [
     "1. Prescription Markup (%)", "2. Prescription Professional Fee ($)", "3. Copayment Discount ($)",
     "4. Delivery Service (0=No, 1=Yes)", "5. Patient Records (0=No, 1=Yes)", "6. Store Offers Credit (0=No, 1=Yes)",
@@ -35,7 +34,6 @@ REPORT_COLUMNS = [
 
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
 
-# Configurable Weights
 DEFAULT_WEIGHTS = {
     "Factor": [
         "Store's Past Rx Price", "Store's Present Rx Price", "Store's Promotion Index",
@@ -43,31 +41,36 @@ DEFAULT_WEIGHTS = {
         "Offers Credit", "Store's Inventory Level", "Store's Previous Market Share",
         "Store's RX Per Hour"
     ],
-    "Medical Center":    [10, 30, 5,  10, 5, 10, 5, 10, 10, 5],
-    "Neighborhood":      [20, 25, 10, 5,  10, 5, 5, 5,  10, 5],
-    "Shopping Center":   [40, 30, 15, 5,  0,  0, 5, 0,  5,  0]
+    "Medical Center":    [10, 30, 5,  20, 5, 10, 5, 5, 5, 5],
+    "Neighborhood":      [20, 25, 10, 10, 10, 5, 5, 5, 5, 5],
+    "Shopping Center":   [40, 30, 15, 5,  0,  0, 5, 0, 5, 0]
 }
 
 # ==========================================
-# 2. State Management & Initialization
+# 2. Initialization & Pre-loading Inputs
 # ==========================================
 def initialize_game(num_teams):
     st.session_state.players = {}
-    st.session_state.global_period = 2 # Start at Period 2 as requested
+    st.session_state.global_period = 2 
     st.session_state.weights_df = pd.DataFrame(DEFAULT_WEIGHTS).set_index("Factor")
     
     for i in range(1, num_teams + 1):
         team_id = f"team_{i}"
         
-        # --- PRE-LOADED INPUTS (Based on User's Data) ---
         inputs = [0.0] * 36
-        # Default Inputs
+        # Defaults
         inputs[0]=50.0; inputs[1]=3.0; inputs[6]=50.0; inputs[13]=45.0
         inputs[17]=1; inputs[18]=25.0; inputs[19]=1; inputs[20]=10.0; 
         inputs[21]=1500.0; inputs[23]=40.0
         
-        # Override for Team 1 (ThaikritOsot Simulation)
+        store_name = f"Store {i}"
+        history = []
+        
+        # --- Store 1: ThaikritOsot Configuration ---
         if i == 1:
+            store_name = "ThaikritOsot"
+            
+            # === CORRECTED INPUTS FOR PERIOD 2 ===
             inputs[0] = 49.0   # Rx Markup
             inputs[1] = 1.0    # Rx Fee
             inputs[2] = 0.0    # Copay
@@ -77,66 +80,92 @@ def initialize_game(num_teams):
             inputs[6] = 60.0   # Hours
             inputs[7] = 1000.0 # Promo
             inputs[8] = 60.0   # % Promo Rx
+            inputs[9] = 0.0    # Invest
+            inputs[10] = 0.0   # Proj Num
+            
             inputs[13] = 47.0  # OTC Markup
-            inputs[14] = 40000.0 # Rx Purchase
-            inputs[15] = 25000.0 # OTC Purchase
-            inputs[17] = 1.0   # Pharmacists
-            inputs[18] = 21.0  # Pharm Rate
-            inputs[19] = 1.5   # Clerks
-            inputs[20] = 4.75  # Clerk Rate
+            inputs[14] = 40000.0 # Rx Pur
+            inputs[15] = 25000.0 # OTC Pur
+            
+            inputs[17] = 1.0   # Pharm
+            inputs[18] = 21.0  # Pay
+            inputs[19] = 1.5   # Clerk
+            inputs[20] = 4.75  # Pay
+            
             inputs[21] = 8100.0 # Mgr Salary
-            inputs[22] = 33.33 # Mgr Time Rx
+            inputs[22] = 33.33 # Time Rx
             inputs[23] = 60.0  # Mgr Hrs
             inputs[24] = 8200.0 # Mortgage
-            inputs[25] = 0.0
+            
             inputs[26] = 1000.0 # Min Cash
-            inputs[28] = 999999.0 # Pay AP (Will be capped logic)
-            inputs[32] = 1.0   # Life Ins
-            inputs[33] = 1.0   # Health Ins
+            
+            inputs[28] = 999999.0 # Pay AP (Index 28 = Input 29)
+            inputs[29] = 10000.0  # Debt Written (Index 29 = Input 30) <-- CORRECTED ($10k)
+            
+            inputs[31] = 2.0      # Int Rate A/R (Index 31 = Input 32) <-- CORRECTED (2%)
+            
+            inputs[32] = 1.0   # Life
+            inputs[33] = 1.0   # Health
             inputs[34] = 1.0   # 3rd Party
-        
+
+            # --- Period 1 History (Static) ---
+            p1_stats = {
+                "Store Name": "ThaikritOsot", "LOCATION": "Medical Center",
+                "Net Profit": 9848.0, "ROI": 7.0, 
+                "TOT SALES": 142312.0, "Rx SALES": 115752.0, "OTH SALES": 26560.0,
+                "Rx Mkt Sh": 12.5, "Avg Rx Pr": 19.61, "Rx Ing $": 11.23, "Rx GM%": 42.7,
+                "Store Hrs": 46.0, "A/P Paid": 20000.0, "E. Loan": 0.0,
+                "Net Worth": 138000.0, "Cash Flow": 5000.0, "Cash": 15000.0,
+                "Investments": 2000.0,
+                "Current": 2.40, "Acid Test": 1.16, "Turnover": 0.67,
+                "ROA": 3.0, "G Margin": 45.0, "Debt/NW": 1.17
+            }
+            history.append(p1_stats)
+
         st.session_state.players[team_id] = {
-            'shop_name': f"Store {i}" if i != 1 else "ThaikritOsot",
-            'location_code': 1 if i == 1 else (i % 3) + 1, # Store 1 = Medical Center
+            'shop_name': store_name,
+            'location_code': 1 if i == 1 else (i % 3) + 1,
             'status': 'Thinking',
             'period': 2,
             'inputs': inputs,
             'financials': {
-                'cash': 7000.0,
-                'investments': 0.0,
-                'acct_receivable': 68000.0,
-                'inventory_rx': 45000.0,
-                'inventory_otc': 40000.0,
-                'fixed_assets': 35000.0,
-                'acct_payable': 20000.0,
-                'notes_payable': 10000.0,
-                'long_term_debt': 80000.0,
-                'retained_earnings': -12000.0
+                'cash': 15000.0 if i==1 else 10000.0,
+                'investments': 2000.0 if i==1 else 0.0,
+                'acct_receivable': 45000.0,
+                'inventory_rx': 55000.0, 
+                'inventory_otc': 25000.0,
+                'fixed_assets': 50000.0,
+                'acct_payable': 30000.0,
+                'notes_payable': 0.0,
+                'long_term_debt': 100000.0,
+                'retained_earnings': 138000.0 if i==1 else 100000.0
             },
             'prev_stats': { 
-                'avg_price': 19.50, 'mkt_share': 100/num_teams, 'rx_per_hr': 5.0
+                'avg_price': 19.61 if i==1 else 20.0, 
+                'mkt_share': 12.5 if i==1 else 20.0, 
+                'rx_per_hr': 5.0
             },
-            'history': []
+            'history': history
         }
 
 if 'players' not in st.session_state:
     initialize_game(5)
 
 # ==========================================
-# 3. Logic Engine (Calibrated)
+# 3. Logic Engine
 # ==========================================
 def calculate_rank_scores(store_list, w_df):
     data = []
-    # Calibrated Base Cost from Analysis ($19.47 price / 1.49 markup - 1 fee)
-    base_cost = 12.40 
-    
+    base_cost = 11.23 
+    price_constant = 2.90 
+
     for p in store_list:
         tid = p['id']
         inp = p['p']['inputs']
         prev = p['p']['prev_stats']
         fin = p['p']['financials']
         
-        curr_price = base_cost * (1 + inp[0]/100) + inp[1]
+        curr_price = (base_cost * (1 + inp[0]/100)) + inp[1] + price_constant
         inv_level = (fin['inventory_rx'] + fin['inventory_otc']) / 1000
         
         data.append({
@@ -152,7 +181,6 @@ def calculate_rank_scores(store_list, w_df):
     loc_code = store_list[0]['p']['location_code']
     weights = w_df[LOC_MAP[loc_code]].values
     
-    # Ranking Logic
     df_ranks = pd.DataFrame({'id': df_comp['id']})
     def get_rank(series, ascending): return series.rank(method='min', ascending=ascending)
 
@@ -166,7 +194,7 @@ def calculate_rank_scores(store_list, w_df):
         total_score = sum(row[f'r{i+1}'] * weights[i] for i in range(10))
         final_scores[row['id']] = total_score
         
-    return final_scores, base_cost
+    return final_scores, base_cost, price_constant
 
 def process_period():
     w_df = st.session_state.weights_df
@@ -179,10 +207,8 @@ def process_period():
     for loc_code, stores in stores_by_loc.items():
         if not stores: continue
         
-        rank_scores, base_cost = calculate_rank_scores(stores, w_df)
+        rank_scores, base_cost, pr_const = calculate_rank_scores(stores, w_df)
         total_loc_score = sum(rank_scores.values())
-        
-        # Calibrated Market Size (~5,500 Rx per store average)
         base_market_size = len(stores) * 6000 
         
         for s_data in stores:
@@ -191,97 +217,87 @@ def process_period():
             inp = p['inputs']
             fin = p['financials']
             
-            # --- SALES ---
+            # Sales
             my_score = rank_scores[tid]
             mkt_share = (my_score / total_loc_score) if total_loc_score else 0
             rx_count = base_market_size * mkt_share
-            
-            avg_rx_price = base_cost * (1 + inp[0]/100) + inp[1]
+            avg_rx_price = (base_cost * (1 + inp[0]/100)) + inp[1] + pr_const
             rx_sales = rx_count * avg_rx_price
             
-            # OTC Ratio Tuned by Location
-            # Medical(1)=Low OTC, Neighbor(2)=Med, Shopping(3)=High
-            otc_factors = {1: 0.25, 2: 0.50, 3: 0.75} 
-            base_otc_ratio = otc_factors.get(loc_code, 0.45)
-            
-            otc_sales = rx_sales * base_otc_ratio * (1 + (inp[7]/5000)) * (1 + inp[13]/100)
+            otc_ratio = 0.25 if loc_code == 1 else 0.45
+            otc_sales = rx_sales * otc_ratio * (1 + (inp[7]/5000)) * (1 + inp[13]/100)
             tot_sales = rx_sales + otc_sales
             
-            # --- RETURNS & COGS ---
-            req_ret_rx = min(inp[26], fin['inventory_rx'] * 0.25)
-            req_ret_otc = min(inp[27], fin['inventory_otc'] * 0.25)
-            cash_returns = (req_ret_rx + req_ret_otc) * 0.8
-            
+            # COGS
             cost_rx = rx_sales / (1 + (inp[0]/100))
             cost_otc = otc_sales / (1 + (inp[13]/100))
             
-            # Emergency Purchase Logic
-            e_rx = max(0, (cost_rx - fin['inventory_rx']) * 1.15)
-            if e_rx > 0: fin['inventory_rx'] = cost_rx
-            e_otc = max(0, (cost_otc - fin['inventory_otc']) * 1.15)
-            if e_otc > 0: fin['inventory_otc'] = cost_otc
+            req_ret_rx = min(inp[26], fin['inventory_rx'] * 0.25)
+            req_ret_otc = min(inp[27], fin['inventory_otc'] * 0.25)
             
-            fin['inventory_rx'] = (fin['inventory_rx'] + inp[14] - req_ret_rx) - cost_rx
-            fin['inventory_otc'] = (fin['inventory_otc'] + inp[15] - req_ret_otc) - cost_otc
-            
-            tot_cogs = cost_rx + cost_otc + e_rx + e_otc
+            # Inv Update
+            fin['inventory_rx'] = max(0, (fin['inventory_rx'] + inp[14] - req_ret_rx) - cost_rx)
+            fin['inventory_otc'] = max(0, (fin['inventory_otc'] + inp[15] - req_ret_otc) - cost_otc)
+
+            tot_cogs = cost_rx + cost_otc
             gross_margin = tot_sales - tot_cogs
             
-            # --- EXPENSES ---
+            # Expenses
             hrs_open = inp[6]
-            # Wages (Pharmacist + Clerk)
-            ph_wage = inp[17] * inp[18] * hrs_open * 13
-            cl_wage = inp[19] * inp[20] * hrs_open * 13
-            wages = ph_wage + cl_wage
-            if hrs_open > 40: wages *= 1.1 # OT Factor
+            wages = (inp[17]*inp[18] + inp[19]*inp[20]) * hrs_open * 13
+            if hrs_open > 40: wages *= 1.1
             
-            # Benefits
             ben_rate = 0
             if inp[32]==1: ben_rate += 0.05
             if inp[33]==1: ben_rate += 0.15
             ben_cost = wages * ben_rate
             
-            fixed_ops = inp[21] + inp[24] + 3000 # Salary + Mortgage + Misc
-            marketing = inp[7]
-            depr = fin['fixed_assets'] * 0.02
-            interest = (fin['long_term_debt'] + fin['notes_payable']) * 0.025
+            fixed_ops = inp[21] + inp[24] + 3000
+            depr = fin['fixed_assets']*0.02
             
-            tot_exp = wages + ben_cost + fixed_ops + marketing + depr + interest
-            net_profit = gross_margin - tot_exp
+            # Interest
+            interest_exp = (fin['long_term_debt'] + fin['notes_payable']) * 0.025
             
-            # --- CASH FLOW ---
-            # Cap A/P Payment at actual debt
+            # [NEW] A/R Interest Income (Input 32)
+            # Assume 50% of AR is overdue and subject to interest
+            ar_interest_income = (fin['acct_receivable'] * 0.5) * (inp[31] / 100)
+            
+            tot_exp = wages + ben_cost + fixed_ops + inp[7] + depr + interest_exp
+            net_profit = gross_margin - tot_exp + ar_interest_income
+            
+            # Cash Flow
             pay_ap = min(inp[28], fin['acct_payable'])
+            debt_written = inp[29] # Input 30: Debt Written (Cash In)
             
-            cash_in = (tot_sales * 0.9) + cash_returns
-            cash_out = (tot_exp - depr) + inp[14] + inp[15] + inp[31] + e_rx + e_otc + pay_ap
+            # Cash In: Sales (90%) + Debt Written + ...
+            cash_in = (tot_sales * 0.9) + debt_written
+            
+            # Cash Out: Expenses (less depr) + Purchases + Debt Pay + AP Pay
+            cash_out = (tot_exp - depr) + inp[14] + inp[15] + inp[30] + pay_ap
             
             fin['cash'] += (cash_in - cash_out)
-            fin['acct_payable'] -= pay_ap
-            # New AP from purchases (simplified assume 50% credit)
-            fin['acct_payable'] += (inp[14] + inp[15]) * 0.5 
             fin['retained_earnings'] += net_profit
-            fin['long_term_debt'] -= inp[31]
+            fin['long_term_debt'] += (debt_written - inp[30]) # Add written debt, sub payment
+            fin['acct_payable'] = max(0, fin['acct_payable'] - pay_ap + (inp[14]+inp[15])*0.5)
             
             e_loan = 0
             if fin['cash'] < 0:
-                e_loan = abs(fin['cash']) + 5000
+                e_loan = abs(fin['cash']) + 2000
                 fin['notes_payable'] += e_loan
                 fin['cash'] += e_loan
-                
-            # --- METRICS & HISTORY ---
+
+            # History
             nw = fin['retained_earnings']
-            curr_assets = fin['cash'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['acct_receivable']
+            curr_assets = fin['cash'] + fin['investments'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['acct_receivable']
             curr_liab = fin['acct_payable'] + fin['notes_payable']
-            
+
             p['history'].append({
                 "Store Name": p['shop_name'], "LOCATION": LOC_MAP[p['location_code']],
                 "Net Profit": net_profit, "ROI": (net_profit/nw*100) if nw else 0,
                 "TOT SALES": tot_sales, "Rx SALES": rx_sales, "OTH SALES": otc_sales,
                 "Rx Mkt Sh": mkt_share * 100, "Avg Rx Pr": avg_rx_price,
-                "Rx Ing $": cost_rx / rx_count if rx_count else 0,
-                "Rx GM%": (rx_sales - cost_rx)/rx_sales*100 if rx_sales else 0,
-                "A/P Paid": pay_ap, "Store Hrs": hrs_open, "E. Loan": e_loan,
+                "Rx Ing $": base_cost, "Rx GM%": (rx_sales - cost_rx)/rx_sales*100 if rx_sales else 0,
+                "Store Hrs": hrs_open, "E. Loan": e_loan, "Investments": fin['investments'],
                 "Net Worth": nw, "Cash Flow": cash_in - cash_out, "Cash": fin['cash'],
                 "Current": curr_assets/curr_liab if curr_liab else 0,
                 "Acid Test": (fin['cash'] + fin['acct_receivable']) / (curr_liab + 1),
@@ -291,6 +307,7 @@ def process_period():
                 "Debt/NW": ((fin['long_term_debt'] + curr_liab) / nw) if nw else 0
             })
             
+            p['prev_stats'] = {'avg_price': avg_rx_price, 'mkt_share': mkt_share*100, 'rx_per_hr': rx_count/(hrs_open*13)}
             p['status'] = 'Thinking'
             p['period'] = p.get('period', 1) + 1
 
@@ -300,16 +317,15 @@ def process_period():
 # 4. UI
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V10.3")
+    st.title("💊 Communi-Pharm V10.5")
     role = st.selectbox("Role", ["Student", "Instructor"])
     
     if role == "Instructor":
         pwd = st.text_input("Admin Password", type="password")
         if pwd == ADMIN_PASSWORD:
             st.markdown("---")
-            teams = st.number_input("Number of Teams", 1, 20, 5)
-            if st.button("⚠️ Reset / New Game", type="primary"):
-                initialize_game(teams); st.rerun()
+            if st.button("⚠️ Reset Game", type="primary"):
+                initialize_game(5); st.rerun()
     
     elif role == "Student":
         if st.session_state.players:
@@ -319,6 +335,7 @@ with st.sidebar:
             st.info(f"Store: {p['shop_name']} | Location: {LOC_MAP[p['location_code']]}")
             
             if p['status'] == 'Thinking':
+                st.write(f"### 📝 Decisions for Period {st.session_state.global_period}")
                 with st.form("inputs"):
                     cols = st.columns(3)
                     for i in range(36):
@@ -327,19 +344,24 @@ with st.sidebar:
                             else: p['inputs'][i] = st.number_input(INPUT_LABELS[i], value=float(p['inputs'][i]))
                     if st.form_submit_button("✅ Submit"): p['status']='Submitted'; st.rerun()
             else:
-                st.success("Submitted.")
+                st.success("Submitted. Waiting for Instructor.")
                 if st.button("Edit"): p['status']='Thinking'; st.rerun()
-                
+
             if p['history']:
+                st.write(f"### 📊 History (Last: Period {p['period']-1})")
                 last = p['history'][-1]
-                m1,m2,m3 = st.columns(3)
-                m1.metric("Sales", f"${last['TOT SALES']:,.0f}")
-                m2.metric("Profit", f"${last['Net Profit']:,.0f}")
+                m1,m2,m3,m4 = st.columns(4)
+                m1.metric("Total Sales", f"${last['TOT SALES']:,.0f}")
+                m2.metric("Net Profit", f"${last['Net Profit']:,.0f}")
                 m3.metric("Cash", f"${last['Cash']:,.0f}")
-                st.dataframe(pd.DataFrame(list(last.items()), columns=["Metric","Value"]), use_container_width=True)
+                m4.metric("Debt/NW", f"{last['Debt/NW']:.2f}")
+                
+                df_res = pd.DataFrame(list(last.items()), columns=["Metric", "Value"])
+                df_res = df_res[df_res['Metric'].isin(REPORT_COLUMNS)]
+                st.dataframe(df_res, use_container_width=True)
 
 if role == "Instructor" and pwd == ADMIN_PASSWORD:
-    st.title("👨‍🏫 Instructor Control")
+    st.title(f"👨‍🏫 Instructor Control (Period {st.session_state.global_period})")
     if st.button("🚀 Run Simulation"):
         process_period(); st.rerun()
     
