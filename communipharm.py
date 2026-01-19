@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm Simulation V10.12", layout="wide")
+st.set_page_config(page_title="Communi-Pharm Simulation V10.13", layout="wide")
 
 # CSS Styling
 st.markdown("""
@@ -63,7 +63,7 @@ OTC_FACTORS = [
     "Store's Present Rx Market Share" 
 ]
 
-# --- INITIAL DEFAULTS (Hardcoded) ---
+# --- INITIAL WEIGHT DEFAULTS ---
 RX_DEFAULT_WEIGHTS = {
     "Factor": RX_FACTORS,
     "Medical Center":    [10, 30, 5,  20, 5, 10, 5, 5, 5, 5],
@@ -79,74 +79,107 @@ OTC_DEFAULT_WEIGHTS = {
 }
 
 # ==========================================
-# 2. STATE MANAGEMENT (MASTER CONFIG)
+# 2. STATE MANAGEMENT & HELPER FUNCTIONS
 # ==========================================
 
-# Initialize MASTER CONFIG if not present (This persists across resets)
+# 1. Weights Memory
 if 'master_rx_weights' not in st.session_state:
     st.session_state.master_rx_weights = pd.DataFrame(RX_DEFAULT_WEIGHTS)
-
 if 'master_otc_weights' not in st.session_state:
     st.session_state.master_otc_weights = pd.DataFrame(OTC_DEFAULT_WEIGHTS)
 
-def start_new_game(num_teams):
+# 2. Team Config Memory (To persist Instructor's custom inputs)
+if 'team_config_df' not in st.session_state:
+    st.session_state.team_config_df = None
+
+def get_default_inputs(team_idx):
+    # Standard logic for default inputs
+    inputs = [0.0] * 36
+    if team_idx == 1:
+        inputs[0]=49.0; inputs[1]=1.0; inputs[2]=0.0
+        inputs[3]=1.0; inputs[4]=1.0; inputs[5]=1.0
+        inputs[6]=60.0; inputs[7]=1000.0; inputs[8]=60.0
+        inputs[9]=0.0; inputs[10]=0.0
+        inputs[13]=47.0; inputs[14]=40000.0; inputs[15]=25000.0
+        inputs[17]=1.0; inputs[18]=21.0
+        inputs[19]=1.5; inputs[20]=4.75
+        inputs[21]=8100.0; inputs[22]=33.33; inputs[23]=60.0
+        inputs[24]=8200.0; inputs[26]=1000.0
+        inputs[28]=999999.0; inputs[29]=10000.0 
+        inputs[31]=2.0 
+        inputs[32]=1.0; inputs[33]=1.0; inputs[34]=1.0
+    else:
+        inputs[0]=50.0; inputs[1]=3.0; inputs[6]=50.0; inputs[13]=45.0
+        inputs[17]=1; inputs[18]=25.0; inputs[19]=1; inputs[20]=10.0; 
+        inputs[21]=1500.0; inputs[23]=40.0
+    return inputs
+
+def init_team_config_df(num_teams):
+    # Create a DataFrame for the Instructor to edit
+    data = []
+    for i in range(1, num_teams + 1):
+        inputs = get_default_inputs(i)
+        row = {
+            "Team ID": f"team_{i}",
+            "Store Name": f"Store {i}",
+            "Location Code": 1 if i == 1 else 0,
+            "Starting Cash": 15000.0
+        }
+        for idx, val in enumerate(inputs):
+            row[f"Inp {idx+1}"] = val
+        data.append(row)
+    return pd.DataFrame(data)
+
+def start_new_game(num_teams, custom_df=None):
     st.session_state.players = {}
     st.session_state.global_period = 2 
     st.session_state.game_active = True
     
-    # --- LOAD FROM MASTER CONFIG (Not Hardcoded Defaults) ---
+    # Load Weights
     st.session_state.rx_weights_df = st.session_state.master_rx_weights.copy()
     st.session_state.otc_weights_df = st.session_state.master_otc_weights.copy()
     
-    for i in range(1, num_teams + 1):
-        team_id = f"team_{i}"
-        store_name = f"Store {i}" 
+    # Use Custom Config if available, otherwise generate defaults
+    if custom_df is None:
+        custom_df = init_team_config_df(num_teams)
+        st.session_state.team_config_df = custom_df # Save as master
+    
+    for index, row in custom_df.iterrows():
+        team_id = row['Team ID']
+        store_name = row['Store Name']
+        loc_code = int(row['Location Code'])
+        start_cash = float(row['Starting Cash'])
         
-        inputs = [0.0] * 36
-        if i == 1: 
-            inputs[0]=49.0; inputs[1]=1.0; inputs[2]=0.0
-            inputs[3]=1.0; inputs[4]=1.0; inputs[5]=1.0
-            inputs[6]=60.0; inputs[7]=1000.0; inputs[8]=60.0
-            inputs[9]=0.0; inputs[10]=0.0
-            inputs[13]=47.0; inputs[14]=40000.0; inputs[15]=25000.0
-            inputs[17]=1.0; inputs[18]=21.0
-            inputs[19]=1.5; inputs[20]=4.75
-            inputs[21]=8100.0; inputs[22]=33.33; inputs[23]=60.0
-            inputs[24]=8200.0; inputs[26]=1000.0
-            inputs[28]=999999.0; inputs[29]=10000.0 
-            inputs[31]=2.0 
-            inputs[32]=1.0; inputs[33]=1.0; inputs[34]=1.0
-        else:
-            inputs[0]=50.0; inputs[1]=3.0; inputs[6]=50.0; inputs[13]=45.0
-            inputs[17]=1; inputs[18]=25.0; inputs[19]=1; inputs[20]=10.0; 
-            inputs[21]=1500.0; inputs[23]=40.0
+        # Extract inputs from DF
+        inputs = []
+        for k in range(36):
+            inputs.append(float(row[f"Inp {k+1}"]))
 
         financials = {
-            'cash': 15000.0, 'investments': 2000.0, 'acct_receivable': 45000.0,
+            'cash': start_cash, 'investments': 2000.0, 'acct_receivable': 45000.0,
             'inventory_rx': 55000.0, 'inventory_otc': 25000.0,
             'fixed_assets': 50000.0, 'acct_payable': 30000.0,
             'notes_payable': 0.0, 'long_term_debt': 100000.0,
-            'retained_earnings': 138000.0
+            'retained_earnings': 138000.0 # simplified balancing
         }
 
+        # Simplified History (Static based on prompt request to just control variables)
         p1_history = {
-            "Store Name": store_name, "LOCATION": "Not Selected",
-            "Net Profit": 9848.0, "ROI": 7.0, 
-            "TOT SALES": 142312.0, "Rx SALES": 115752.0, "OTH SALES": 26560.0,
-            "Rx Mkt Sh": 12.5, "OTC Mkt Sh": 12.5, 
-            "Avg Rx Pr": 19.61, "Rx Ing $": 11.23, "Rx GM%": 42.7,
-            "Store Hrs": 46.0, "A/P Paid": 20000.0, "E. Loan": 0.0,
-            "Net Worth": 138000.0, "Cash Flow": 5000.0, "Cash": 15000.0,
+            "Store Name": store_name, "LOCATION": LOC_MAP[loc_code],
+            "Net Profit": 0.0, "ROI": 0.0, 
+            "TOT SALES": 0.0, "Rx SALES": 0.0, "OTH SALES": 0.0,
+            "Rx Mkt Sh": 0.0, "OTC Mkt Sh": 0.0, 
+            "Avg Rx Pr": 0.0, "Rx Ing $": 11.23, "Rx GM%": 0.0,
+            "Store Hrs": inputs[6], "A/P Paid": 0.0, "E. Loan": 0.0,
+            "Net Worth": 138000.0, "Cash Flow": 0.0, "Cash": start_cash,
             "Investments": 2000.0,
-            "Current": 2.40, "Acid Test": 1.16, "Turnover": 0.67,
-            "ROA": 3.0, "G Margin": 45.0, "Debt/NW": 1.17
+            "Current": 0.0, "Acid Test": 0.0, "Turnover": 0.0,
+            "ROA": 0.0, "G Margin": 0.0, "Debt/NW": 0.0
         }
         
-        if i == 1: p1_history["LOCATION"] = "Medical Center"
-
         st.session_state.players[team_id] = {
             'shop_name': store_name,
-            'location_code': 1 if i == 1 else 0, 
+            'location_code': loc_code, 
             'status': 'Thinking',
             'period': 2,
             'inputs': inputs,
@@ -155,12 +188,13 @@ def start_new_game(num_teams):
                 'avg_price': 19.61, 
                 'mkt_share': 12.5, 
                 'rx_per_hr': 5.0,
-                'otc_markup': 47.0 if i == 1 else 45.0
+                'otc_markup': inputs[13]
             },
             'history': [p1_history]
         }
 
 if 'players' not in st.session_state:
+    # Init first run with default 5 teams
     start_new_game(5)
 
 # ==========================================
@@ -172,7 +206,6 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
     loc_code = store_list[0]['p']['location_code']
     loc_name = LOC_MAP[loc_code]
     
-    # 1. Prepare Data
     for p in store_list:
         tid = p['id']; inp = p['p']['inputs']; prev = p['p']['prev_stats']; fin = p['p']['financials']
         curr_price = (base_cost * (1 + inp[0]/100)) + inp[1] + price_constant
@@ -194,8 +227,10 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
     
     df_comp = pd.DataFrame(data)
     
-    # --- Rx SCORING ---
+    # --- SCORING (Rx & OTC) ---
     rx_weights = rx_w_df.set_index("Factor")[loc_name].values
+    otc_weights = otc_w_df.set_index("Factor")[loc_name].values
+    
     df_rx_ranks = pd.DataFrame({'id': df_comp['id']})
     def get_rank(series, ascending): return series.rank(method='min', ascending=ascending)
     
@@ -205,19 +240,13 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
     for i, col in enumerate(cols_map):
         df_rx_ranks[f'r{i+2}'] = get_rank(df_comp[col], True) 
         
-    rx_scores = {}
-    for index, row in df_rx_ranks.iterrows():
-        rx_scores[row['id']] = sum(row[f'r{i}'] * rx_weights[i] for i in range(10))
-
+    rx_scores = {row['id']: sum(row[f'r{i}'] * rx_weights[i] for i in range(10)) for index, row in df_rx_ranks.iterrows()}
     total_rx_score = sum(rx_scores.values())
     rx_shares = {k: (v/total_rx_score if total_rx_score else 0) for k,v in rx_scores.items()}
 
-    # --- OTC SCORING ---
-    otc_weights = otc_w_df.set_index("Factor")[loc_name].values
-    df_otc_ranks = pd.DataFrame({'id': df_comp['id']})
-    
     df_comp['rx_share_result'] = df_comp['id'].map(rx_shares)
     
+    df_otc_ranks = pd.DataFrame({'id': df_comp['id']})
     df_otc_ranks['o0'] = get_rank(df_comp['otc_markup_past'], False)
     df_otc_ranks['o1'] = get_rank(df_comp['otc_markup_pres'], False)
     df_otc_ranks['o2'] = get_rank(df_comp['advertising'], True)
@@ -225,10 +254,7 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
     df_otc_ranks['o4'] = get_rank(df_comp['inventory'], True)
     df_otc_ranks['o5'] = get_rank(df_comp['rx_share_result'], True)
 
-    otc_scores = {}
-    for index, row in df_otc_ranks.iterrows():
-        otc_scores[row['id']] = sum(row[f'o{i}'] * otc_weights[i] for i in range(6))
-        
+    otc_scores = {row['id']: sum(row[f'o{i}'] * otc_weights[i] for i in range(6)) for index, row in df_otc_ranks.iterrows()}
     total_otc_score = sum(otc_scores.values())
     otc_shares = {k: (v/total_otc_score if total_otc_score else 0) for k,v in otc_scores.items()}
 
@@ -249,8 +275,7 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
         loc_mult = 1.0
         if loc_code == 3: loc_mult = 1.5 
         
-        potential_otc_sales = base_otc_market_usd * loc_mult
-        otc_sales = potential_otc_sales * my_otc_share
+        otc_sales = base_otc_market_usd * loc_mult * my_otc_share
         tot_sales = rx_sales + otc_sales
         
         cost_rx = rx_sales / (1 + (inp[0]/100))
@@ -342,14 +367,8 @@ with st.sidebar:
         pwd = st.text_input("Password", type="password")
         if pwd == ADMIN_PASSWORD:
             st.success("Authorized")
-            st.markdown("### ⚙️ Game Setup")
-            num_teams = st.number_input("Number of Teams", min_value=1, max_value=7, value=5, step=1)
+            st.markdown("### ⚙️ Game Control")
             
-            if st.button("🔄 New Game / Reset", type="primary"):
-                start_new_game(num_teams)
-                st.rerun()
-                
-            st.markdown("---")
             ready = sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')
             st.write(f"**Period:** {st.session_state.global_period}")
             st.metric("Ready Teams", f"{ready}/{len(st.session_state.players)}")
@@ -375,6 +394,9 @@ if role == "Student":
                 c1, c2 = st.columns(2)
                 new_name = c1.text_input("📛 Store Name", p['shop_name'])
                 if new_name != p['shop_name']: p['shop_name'] = new_name; st.rerun()
+                
+                # If Location was set by Instructor in init, it shows here, but student can change?
+                # Usually we let student change, but since instructor set it, let's show it.
                 loc_idx = c2.selectbox("📍 Location", [0,1,2,3], format_func=lambda x: LOC_MAP[x], index=p['location_code'])
                 if loc_idx != p['location_code']: p['location_code'] = loc_idx; st.rerun()
             st.markdown("---")
@@ -393,7 +415,7 @@ if role == "Student":
                         with cols[i%3]:
                             label = INPUT_LABELS[i].split('(')[0]
                             key_name = f"in_{sel_id}_{i}"
-                            # Init key if not exists
+                            # Init key if not exists (This pulls from p['inputs'] which came from Instructor Init)
                             if key_name not in st.session_state:
                                 st.session_state[key_name] = float(p['inputs'][i])
                                 
@@ -429,43 +451,57 @@ if role == "Student":
 
 elif role == "Instructor" and pwd == ADMIN_PASSWORD:
     st.header("👨‍🏫 Instructor Dashboard")
-    tab_conf, tab_res = st.tabs(["⚙️ Weights Configuration", "🏆 Results"])
+    tab_conf, tab_init, tab_res = st.tabs(["⚙️ Global Weights", "🏥 Team Setup (Period 1)", "🏆 Results"])
     
     with tab_conf:
         with st.form("weights_form"):
             c1, c2 = st.columns(2)
             with c1:
-                st.write("### 💊 Rx Market Share Weights")
-                # Load initial values from Session State (active)
+                st.write("### 💊 Rx Weights")
                 edited_rx = st.data_editor(st.session_state.rx_weights_df, use_container_width=True, num_rows="fixed", key="rx_editor")
-                    
             with c2:
-                st.write("### 🛍️ OTC Market Share Weights")
-                st.caption("Factors: Past/Present Markup, Ads, Hours, Inventory, Rx Share")
+                st.write("### 🛍️ OTC Weights")
                 edited_otc = st.data_editor(st.session_state.otc_weights_df, use_container_width=True, num_rows="fixed", key="otc_editor")
             
-            st.markdown("---")
-            submitted = st.form_submit_button("💾 Save Configuration & Set as Default", type="primary")
-            
-            if submitted:
-                # 1. Update Active Game Weights
+            if st.form_submit_button("💾 Save Weights"):
                 st.session_state.rx_weights_df = edited_rx
                 st.session_state.otc_weights_df = edited_otc
-                
-                # 2. UPDATE MASTER CONFIG (Persist for Next Resets)
                 st.session_state.master_rx_weights = edited_rx.copy()
                 st.session_state.master_otc_weights = edited_otc.copy()
-                
-                st.success("Configuration Saved! These settings will be used for all future games in this session.")
-                
-                # Validation Logic
-                for loc in ["Medical Center", "Neighborhood", "Shopping Center"]:
-                    t_rx = edited_rx[loc].sum()
-                    t_otc = edited_otc[loc].sum()
-                    if t_rx != 100 or t_otc != 100:
-                        st.warning(f"⚠️ Warning: {loc} Rx Sum={t_rx}, OTC Sum={t_otc} (Should be 100)")
-                
+                st.success("Weights Saved!")
                 st.rerun()
+
+    with tab_init:
+        st.write("### 🛠️ Configure Period 1 Inputs for Each Team")
+        st.info("Use this table to set the starting variables and cash for every store before the game begins.")
+        
+        # Helper to regenerate table if team count changes
+        num_teams_to_init = st.number_input("How many teams?", min_value=1, max_value=20, value=5, step=1)
+        
+        if st.button("Reset Table to Defaults"):
+            st.session_state.team_config_df = init_team_config_df(num_teams_to_init)
+            st.rerun()
+
+        # Check if DF exists, if not create it
+        if st.session_state.team_config_df is None:
+             st.session_state.team_config_df = init_team_config_df(num_teams_to_init)
+
+        # Show Data Editor
+        # Note: 36 columns is wide, use_container_width handles it but scrolling is needed
+        edited_teams = st.data_editor(
+            st.session_state.team_config_df, 
+            num_rows="dynamic", 
+            use_container_width=True,
+            key="team_init_editor",
+            height=400
+        )
+        
+        st.write("")
+        if st.button("💾 SAVE & START NEW GAME", type="primary"):
+            st.session_state.team_config_df = edited_teams # Save user changes to master
+            start_new_game(len(edited_teams), custom_df=edited_teams)
+            st.success("New Game Started with Custom Settings!")
+            st.rerun()
 
     with tab_res:
         st.write("### Current Standings")
