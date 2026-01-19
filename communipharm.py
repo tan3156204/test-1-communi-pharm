@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm Simulation V10.11", layout="wide")
+st.set_page_config(page_title="Communi-Pharm Simulation V10.12", layout="wide")
 
 # CSS Styling
 st.markdown("""
@@ -47,7 +47,6 @@ REPORT_COLUMNS = [
 
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
 
-# Factors Lists
 RX_FACTORS = [
     "Store's Past Rx Price", "Store's Present Rx Price", "Store's Promotion Index",
     "Store's Hours", "Offers Delivery Service", "Offers Patient Records",
@@ -64,7 +63,7 @@ OTC_FACTORS = [
     "Store's Present Rx Market Share" 
 ]
 
-# Default Weights
+# --- INITIAL DEFAULTS (Hardcoded) ---
 RX_DEFAULT_WEIGHTS = {
     "Factor": RX_FACTORS,
     "Medical Center":    [10, 30, 5,  20, 5, 10, 5, 5, 5, 5],
@@ -80,17 +79,24 @@ OTC_DEFAULT_WEIGHTS = {
 }
 
 # ==========================================
-# 2. STATE MANAGEMENT & INITIALIZATION
+# 2. STATE MANAGEMENT (MASTER CONFIG)
 # ==========================================
+
+# Initialize MASTER CONFIG if not present (This persists across resets)
+if 'master_rx_weights' not in st.session_state:
+    st.session_state.master_rx_weights = pd.DataFrame(RX_DEFAULT_WEIGHTS)
+
+if 'master_otc_weights' not in st.session_state:
+    st.session_state.master_otc_weights = pd.DataFrame(OTC_DEFAULT_WEIGHTS)
 
 def start_new_game(num_teams):
     st.session_state.players = {}
     st.session_state.global_period = 2 
     st.session_state.game_active = True
     
-    # Load weights into session
-    st.session_state.rx_weights_df = pd.DataFrame(RX_DEFAULT_WEIGHTS)
-    st.session_state.otc_weights_df = pd.DataFrame(OTC_DEFAULT_WEIGHTS)
+    # --- LOAD FROM MASTER CONFIG (Not Hardcoded Defaults) ---
+    st.session_state.rx_weights_df = st.session_state.master_rx_weights.copy()
+    st.session_state.otc_weights_df = st.session_state.master_otc_weights.copy()
     
     for i in range(1, num_teams + 1):
         team_id = f"team_{i}"
@@ -98,7 +104,6 @@ def start_new_game(num_teams):
         
         inputs = [0.0] * 36
         if i == 1: 
-            # Store 1 Pre-filled
             inputs[0]=49.0; inputs[1]=1.0; inputs[2]=0.0
             inputs[3]=1.0; inputs[4]=1.0; inputs[5]=1.0
             inputs[6]=60.0; inputs[7]=1000.0; inputs[8]=60.0
@@ -426,14 +431,12 @@ elif role == "Instructor" and pwd == ADMIN_PASSWORD:
     st.header("👨‍🏫 Instructor Dashboard")
     tab_conf, tab_res = st.tabs(["⚙️ Weights Configuration", "🏆 Results"])
     
-    # ----------------------------------------------------
-    # FIXED HERE: WRAPPED IN FORM TO PREVENT BOUNCING
-    # ----------------------------------------------------
     with tab_conf:
         with st.form("weights_form"):
             c1, c2 = st.columns(2)
             with c1:
                 st.write("### 💊 Rx Market Share Weights")
+                # Load initial values from Session State (active)
                 edited_rx = st.data_editor(st.session_state.rx_weights_df, use_container_width=True, num_rows="fixed", key="rx_editor")
                     
             with c2:
@@ -442,15 +445,20 @@ elif role == "Instructor" and pwd == ADMIN_PASSWORD:
                 edited_otc = st.data_editor(st.session_state.otc_weights_df, use_container_width=True, num_rows="fixed", key="otc_editor")
             
             st.markdown("---")
-            submitted = st.form_submit_button("💾 Save Configuration", type="primary")
+            submitted = st.form_submit_button("💾 Save Configuration & Set as Default", type="primary")
             
             if submitted:
-                # Update Session State only when button is clicked
+                # 1. Update Active Game Weights
                 st.session_state.rx_weights_df = edited_rx
                 st.session_state.otc_weights_df = edited_otc
-                st.success("Weights Updated Successfully!")
                 
-                # Validation Logic (Show after click)
+                # 2. UPDATE MASTER CONFIG (Persist for Next Resets)
+                st.session_state.master_rx_weights = edited_rx.copy()
+                st.session_state.master_otc_weights = edited_otc.copy()
+                
+                st.success("Configuration Saved! These settings will be used for all future games in this session.")
+                
+                # Validation Logic
                 for loc in ["Medical Center", "Neighborhood", "Shopping Center"]:
                     t_rx = edited_rx[loc].sum()
                     t_otc = edited_otc[loc].sum()
