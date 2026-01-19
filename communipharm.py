@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm Simulation V10.17", layout="wide")
+st.set_page_config(page_title="Communi-Pharm Simulation V10.19", layout="wide")
 
 # CSS Styling
 st.markdown("""
@@ -76,7 +76,7 @@ OTC_DEFAULT_WEIGHTS = {
 }
 
 # ==========================================
-# 2. STATE MANAGEMENT
+# 2. STATE MANAGEMENT (หัวใจสำคัญ: ไม่ทับข้อมูลเดิม)
 # ==========================================
 if 'master_rx_weights' not in st.session_state:
     st.session_state.master_rx_weights = pd.DataFrame(RX_DEFAULT_WEIGHTS)
@@ -96,7 +96,6 @@ def start_new_game(num_teams):
     st.session_state.players = {}
     st.session_state.global_period = 1 
     st.session_state.game_active = True
-    # Reset Weights
     st.session_state.rx_weights_df = st.session_state.master_rx_weights.copy()
     st.session_state.otc_weights_df = st.session_state.master_otc_weights.copy()
     
@@ -120,6 +119,7 @@ def start_new_game(num_teams):
             'history': [] 
         }
 
+# บรรทัดนี้สำคัญมาก! ถ้ามีข้อมูล players อยู่แล้ว มันจะไม่สร้างใหม่ ข้อมูลเดิมจึงยังอยู่
 if 'players' not in st.session_state:
     start_new_game(5)
 
@@ -271,7 +271,8 @@ with st.sidebar:
             st.success("Authorized")
             st.markdown("### ⚙️ Game Control")
             num_teams = st.number_input("Number of Teams", 1, 20, 5)
-            if st.button("🔄 Start New Game (Reset)", type="primary"):
+            # แก้ไขปุ่ม Reset ให้ชัดเจนขึ้น เพื่อป้องกันการกดพลาด
+            if st.button("⚠️ HARD RESET GAME (ล้างข้อมูล)", type="primary"):
                 start_new_game(num_teams); st.rerun()
             st.markdown("---")
             ready = sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')
@@ -312,10 +313,10 @@ if role == "Student":
                 df_inputs = pd.DataFrame({
                     "Input #": [f"{i+1}" for i in range(36)],
                     "Description": INPUT_LABELS,
-                    "Value": [float(x) for x in p['inputs']] # Ensure Float
+                    "Value": [float(x) for x in p['inputs']] 
                 })
 
-                # Unique Key helps prevent Freezing when switching tabs/teams
+                # Unique Key helps prevent Freezing
                 editor_key = f"editor_v2_{sel_id}_{p['period']}"
                 
                 edited_df = st.data_editor(
@@ -324,31 +325,18 @@ if role == "Student":
                         "Input #": st.column_config.TextColumn(disabled=True, width="small"),
                         "Description": st.column_config.TextColumn(disabled=True, width="large"),
                         "Value": st.column_config.NumberColumn(
-                            "Your Input", 
-                            min_value=0.0, 
-                            max_value=1000000.0,
-                            step=0.1,
-                            required=True,
-                            width="medium"
+                            "Your Input", min_value=0.0, max_value=1000000.0, step=0.1, required=True, width="medium"
                         )
                     },
-                    hide_index=True,
-                    use_container_width=True,
-                    height=800, 
-                    key=editor_key
+                    hide_index=True, use_container_width=True, height=800, key=editor_key
                 )
                 
                 st.markdown("---")
                 if st.button("✅ Submit Decisions", type="primary", key=f"btn_{sel_id}"):
-                    # Convert column back to float list safely
                     try:
-                        new_inputs = edited_df["Value"].astype(float).tolist()
-                        p['inputs'] = new_inputs
-                        p['status'] = 'Submitted'
-                        st.success("Saved!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error saving data: {e}")
+                        p['inputs'] = edited_df["Value"].astype(float).tolist()
+                        p['status'] = 'Submitted'; st.success("Saved!"); st.rerun()
+                    except Exception as e: st.error(f"Error saving data: {e}")
 
             else:
                 st.success("Submitted! Waiting for Instructor."); 
@@ -364,9 +352,12 @@ if role == "Student":
                 m3.metric("Rx Share", f"{last['Rx Mkt Sh']:.1f}%")
                 m4.metric("OTC Share", f"{last['OTC Mkt Sh']:.1f}%")
                 
+                # --- แก้ไขจุดที่ Error (Format เฉพาะตัวเลข) ---
                 df_hist = pd.DataFrame(p['history'])
                 display_cols = ["Period"] + [c for c in REPORT_COLUMNS if c in df_hist.columns]
-                st.dataframe(df_hist[display_cols].style.format("{:,.2f}"), use_container_width=True, height=500)
+                # สร้าง dict เพื่อ format เฉพาะคอลัมน์ที่เป็นตัวเลขจริง ๆ
+                fmt_dict = {col: "{:,.2f}" for col in REPORT_COLUMNS if col in df_hist.columns}
+                st.dataframe(df_hist[display_cols].style.format(fmt_dict), use_container_width=True, height=500)
             else:
                 st.info("No history yet.")
 
@@ -381,14 +372,16 @@ elif role == "Instructor" and pwd == ADMIN_PASSWORD:
             if st.form_submit_button("💾 Save Weights"):
                 st.session_state.rx_weights_df = edited_rx; st.session_state.otc_weights_df = edited_otc
                 st.session_state.master_rx_weights = edited_rx.copy(); st.session_state.master_otc_weights = edited_otc.copy()
-                st.success("Saved!")
-                st.rerun()
+                st.success("Saved!"); st.rerun()
 
     with tab_res:
         st.write("### Current Standings")
         rows = [p['history'][-1] for p in st.session_state.players.values() if p['history']]
         if rows:
             df = pd.DataFrame(rows).sort_values("Net Profit", ascending=False)
-            st.dataframe(df[["Store Name", "Period"] + REPORT_COLUMNS].style.format("{:,.2f}"), use_container_width=True)
+            display_cols = ["Store Name", "Period"] + REPORT_COLUMNS
+            # --- แก้ไขจุดที่ Error สำหรับ Instructor ด้วย ---
+            fmt_dict = {col: "{:,.2f}" for col in REPORT_COLUMNS}
+            st.dataframe(df[display_cols].style.format(fmt_dict), use_container_width=True)
         else:
             st.info("No results yet.")
