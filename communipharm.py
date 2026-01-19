@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm Simulation V10.10", layout="wide")
+st.set_page_config(page_title="Communi-Pharm Simulation V10.11", layout="wide")
 
 # CSS Styling
 st.markdown("""
@@ -387,9 +387,8 @@ if role == "Student":
                     for i in range(36):
                         with cols[i%3]:
                             label = INPUT_LABELS[i].split('(')[0]
-                            # --- KEY FIX FOR BOUNCING VALUES ---
-                            # Use session_state key binding. Initialize if not present.
                             key_name = f"in_{sel_id}_{i}"
+                            # Init key if not exists
                             if key_name not in st.session_state:
                                 st.session_state[key_name] = float(p['inputs'][i])
                                 
@@ -399,13 +398,10 @@ if role == "Student":
                                 st.number_input(f"{i+1}. {label}", key=key_name)
                                 
                     st.markdown("---")
-                    submitted = st.form_submit_button("✅ Submit Decisions", type="primary")
-                    if submitted:
-                        # Explicitly update players dict from session state on submit
+                    if st.form_submit_button("✅ Submit Decisions", type="primary"):
                         for i in range(36):
                             p['inputs'][i] = st.session_state[f"in_{sel_id}_{i}"]
-                        p['status'] = 'Submitted'
-                        st.rerun()
+                        p['status'] = 'Submitted'; st.rerun()
             else:
                 st.success("Submitted! Waiting for Instructor."); 
                 if st.button("Edit Decisions"): p['status'] = 'Thinking'; st.rerun()
@@ -430,26 +426,38 @@ elif role == "Instructor" and pwd == ADMIN_PASSWORD:
     st.header("👨‍🏫 Instructor Dashboard")
     tab_conf, tab_res = st.tabs(["⚙️ Weights Configuration", "🏆 Results"])
     
+    # ----------------------------------------------------
+    # FIXED HERE: WRAPPED IN FORM TO PREVENT BOUNCING
+    # ----------------------------------------------------
     with tab_conf:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.write("### 💊 Rx Market Share Weights")
-            edited_rx = st.data_editor(st.session_state.rx_weights_df, use_container_width=True, num_rows="fixed", key="rx_w")
-            st.session_state.rx_weights_df = edited_rx
-            for loc in ["Medical Center", "Neighborhood", "Shopping Center"]:
-                total = edited_rx[loc].sum()
-                color = "weight-ok" if total == 100 else "weight-warning"
-                st.markdown(f"<span class='{color}'>Rx {loc}: {total} (Target: 100)</span>", unsafe_allow_html=True)
+        with st.form("weights_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.write("### 💊 Rx Market Share Weights")
+                edited_rx = st.data_editor(st.session_state.rx_weights_df, use_container_width=True, num_rows="fixed", key="rx_editor")
+                    
+            with c2:
+                st.write("### 🛍️ OTC Market Share Weights")
+                st.caption("Factors: Past/Present Markup, Ads, Hours, Inventory, Rx Share")
+                edited_otc = st.data_editor(st.session_state.otc_weights_df, use_container_width=True, num_rows="fixed", key="otc_editor")
+            
+            st.markdown("---")
+            submitted = st.form_submit_button("💾 Save Configuration", type="primary")
+            
+            if submitted:
+                # Update Session State only when button is clicked
+                st.session_state.rx_weights_df = edited_rx
+                st.session_state.otc_weights_df = edited_otc
+                st.success("Weights Updated Successfully!")
                 
-        with c2:
-            st.write("### 🛍️ OTC Market Share Weights")
-            st.caption("Factors: Past/Present Markup, Ads, Hours, Inventory, Rx Share")
-            edited_otc = st.data_editor(st.session_state.otc_weights_df, use_container_width=True, num_rows="fixed", key="otc_w")
-            st.session_state.otc_weights_df = edited_otc
-            for loc in ["Medical Center", "Neighborhood", "Shopping Center"]:
-                total = edited_otc[loc].sum()
-                color = "weight-ok" if total == 100 else "weight-warning"
-                st.markdown(f"<span class='{color}'>OTC {loc}: {total} (Target: 100)</span>", unsafe_allow_html=True)
+                # Validation Logic (Show after click)
+                for loc in ["Medical Center", "Neighborhood", "Shopping Center"]:
+                    t_rx = edited_rx[loc].sum()
+                    t_otc = edited_otc[loc].sum()
+                    if t_rx != 100 or t_otc != 100:
+                        st.warning(f"⚠️ Warning: {loc} Rx Sum={t_rx}, OTC Sum={t_otc} (Should be 100)")
+                
+                st.rerun()
 
     with tab_res:
         st.write("### Current Standings")
