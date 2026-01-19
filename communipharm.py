@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm Simulation V10.16", layout="wide")
+st.set_page_config(page_title="Communi-Pharm Simulation V10.17", layout="wide")
 
 # CSS Styling
 st.markdown("""
@@ -96,6 +96,7 @@ def start_new_game(num_teams):
     st.session_state.players = {}
     st.session_state.global_period = 1 
     st.session_state.game_active = True
+    # Reset Weights
     st.session_state.rx_weights_df = st.session_state.master_rx_weights.copy()
     st.session_state.otc_weights_df = st.session_state.master_otc_weights.copy()
     
@@ -270,7 +271,7 @@ with st.sidebar:
             st.success("Authorized")
             st.markdown("### ⚙️ Game Control")
             num_teams = st.number_input("Number of Teams", 1, 20, 5)
-            if st.button("🔄 Start New Game", type="primary"):
+            if st.button("🔄 Start New Game (Reset)", type="primary"):
                 start_new_game(num_teams); st.rerun()
             st.markdown("---")
             ready = sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')
@@ -305,17 +306,18 @@ if role == "Student":
         with tab1:
             st.subheader(f"Decisions for Period {p['period']}")
             if p['status'] == 'Thinking':
-                st.info("💡 Tip: You can type a value and press **Enter** to move to the next row automatically!")
+                st.info("💡 You can press **Enter** to move to the next row.")
                 
-                # --- EXCEL STYLE EDITOR START ---
-                # 1. Create Dataframe for display
+                # Create DataFrame
                 df_inputs = pd.DataFrame({
                     "Input #": [f"{i+1}" for i in range(36)],
                     "Description": INPUT_LABELS,
-                    "Value": p['inputs']
+                    "Value": [float(x) for x in p['inputs']] # Ensure Float
                 })
 
-                # 2. Show Editor
+                # Unique Key helps prevent Freezing when switching tabs/teams
+                editor_key = f"editor_v2_{sel_id}_{p['period']}"
+                
                 edited_df = st.data_editor(
                     df_inputs,
                     column_config={
@@ -325,24 +327,28 @@ if role == "Student":
                             "Your Input", 
                             min_value=0.0, 
                             max_value=1000000.0,
+                            step=0.1,
                             required=True,
                             width="medium"
                         )
                     },
                     hide_index=True,
                     use_container_width=True,
-                    height=1300, # Tall enough to see all without internal scroll
-                    key=f"editor_{sel_id}_{p['period']}" # Unique key per period
+                    height=800, 
+                    key=editor_key
                 )
                 
-                # 3. Submit Logic
                 st.markdown("---")
-                if st.button("✅ Submit Decisions", type="primary"):
-                    # Save values back to player state
-                    p['inputs'] = edited_df["Value"].tolist()
-                    p['status'] = 'Submitted'
-                    st.rerun()
-                # --- EXCEL STYLE EDITOR END ---
+                if st.button("✅ Submit Decisions", type="primary", key=f"btn_{sel_id}"):
+                    # Convert column back to float list safely
+                    try:
+                        new_inputs = edited_df["Value"].astype(float).tolist()
+                        p['inputs'] = new_inputs
+                        p['status'] = 'Submitted'
+                        st.success("Saved!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error saving data: {e}")
 
             else:
                 st.success("Submitted! Waiting for Instructor."); 
