@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V33 (Corrected 29 Vars)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V33 (Clean UI)", layout="wide")
 
 st.markdown("""
 <style>
@@ -37,7 +37,7 @@ INPUT_LABELS = [
     "34. Ben: Health (0/1)", "35. 3rd Party (0/1)", "36. HMO Bid ($)"
 ]
 
-# Instructor Data Labels (Exactly 29 Variables based on analysis)
+# Instructor Data Labels (Exactly 29 Variables)
 INST_LABELS_29 = [
     "1. Avg Rx Ing Cost ($)", "2. Avg 3rd-Party Copay", "3. Avg 3rd-Party Fee",
     "4. % Market 3rd-Party", "5. Max Ad Allow ($)", "6. % AR (Medical)",
@@ -73,7 +73,6 @@ if 'game_state' not in st.session_state:
     st.session_state.players = {}
 
 # Default Instructor Data (29 Variables)
-# Derived from: 11.23 2 2.75 ... 28.5 23
 if 'inst_data_list' not in st.session_state:
     st.session_state.inst_data_list = [
         11.23, 2.0, 2.75, 46.43, 1200.0, 30.2, 21.2, 9.34, 10.5, 
@@ -115,32 +114,28 @@ def initialize_teams(num_teams):
 def calculate_results():
     store_list = [p for p in st.session_state.players.values()]
     num_stores = len(store_list)
-    
-    # --- MAP INSTRUCTOR DATA (29 VARS) ---
     inst = st.session_state.inst_data_list
-    # Index 0 corresponds to Label 1.
+    
     BASE_RX_COST = inst[0]      # 1. Avg Rx Ing Cost
-    CONST_FEE = 2.90            # Constant fee from V21 logic (not in 29 vars explicitly, usually fixed)
+    CONST_FEE = 2.90            
     AD_LIMIT = inst[4]          # 5. Max Ad Allow
     INTEREST_RATE = inst[8]/100 # 9. Interest Rate
     RX_MKT_VOL = inst[9]        # 10. Avg Rx Vol
     OTC_MKT_VAL = inst[10]      # 11. Avg OTC Sales
     SALES_PER_CLK = inst[26]    # 27. Sales/Clerk/Hr
-    BENEFIT_PCT = inst[27]      # 28. Benefits % (e.g. 28.5 or 8.5)
-    EMERGENCY_RATE = 400.0      # Hardcoded or use Var 29 if it represents rate
-    if inst[28] > 100: EMERGENCY_RATE = inst[28] # If var 29 is large, assume it's rate
+    BENEFIT_PCT = inst[27]      # 28. Benefits %
+    EMERGENCY_RATE = 400.0      
+    if inst[28] > 100: EMERGENCY_RATE = inst[28] 
     
     # --- PHASE 1: RANKING PREP ---
     ranking_data = []
     for p in store_list:
         tid = p['id']; inp = p['inputs']; prev = p['prev_stats']; fin = p['financials']
         
-        # Price Calc
         if inp[0] > 10: calc_price = BASE_RX_COST * (1 + inp[0]/100)
         else: calc_price = BASE_RX_COST + inp[0]
         pres_price = max(calc_price, 5.0) + CONST_FEE
         
-        # Ad Index
         def calc_ad(curr, past):
             factor = min((curr/AD_LIMIT) + (past*0.533), 2.0)
             return max(0, (0.84*factor) - (0.16*(factor**2)))
@@ -148,7 +143,6 @@ def calculate_results():
         new_rx_ad = calc_ad(inp[7] * (inp[8]/100), prev.get('ad_index', 1.0))
         new_otc_ad = calc_ad(inp[7] * (1 - inp[8]/100), prev.get('ad_index', 1.0))
         
-        # Inv Level
         def calc_inv(cogs, avg_inv): return cogs/avg_inv if avg_inv>0 else 10
         rx_inv = calc_inv(prev.get('cogs_rx',1), prev.get('avg_inv_rx',1))
         otc_inv = calc_inv(prev.get('cogs_otc',1), prev.get('avg_inv_otc',1))
@@ -168,7 +162,6 @@ def calculate_results():
     # --- PHASE 2: SCORING ---
     def calc_pts(series, asc): return (num_stores + 1) - series.rank(method='min', ascending=asc)
 
-    # Rx Scoring
     rx_sc = pd.Series(0.0, index=df.index)
     rx_map = [('Price_Past',1), ('Price_Pres',1), ('Promo',0), ('Hours',0), ('Delivery',0), ('Records',0), ('Credit',0), ('Inventory',1), ('MktShare',0), ('Efficiency',0)]
     rx_keys = list(st.session_state.rx_weights_df.columns)
@@ -181,7 +174,6 @@ def calculate_results():
         
     df['Rx_Share'] = rx_sc / rx_sc.sum()
     
-    # OTC Scoring
     df['Rx_Share_Val'] = df['Rx_Share'] * 100
     otc_sc = pd.Series(0.0, index=df.index)
     otc_map = [('Markup_Past',1), ('Markup_Pres',1), ('Ad_Index_OTC',0), ('Hours',0), ('Inv_OTC',1), ('Rx_Share_Val',0)]
@@ -207,7 +199,6 @@ def calculate_results():
         share = rx_share_map[tid]
         if tid == hmo_win: share *= 1.15
         
-        # Sales
         rx_cnt = RX_MKT_VOL * num_stores * share
         if inp[0]>10: p_pr = BASE_RX_COST*(1+inp[0]/100)
         else: p_pr = BASE_RX_COST + inp[0]
@@ -217,41 +208,34 @@ def calculate_results():
         otc_sale = OTC_MKT_VAL * num_stores * otc_share_map[tid]
         tot_sale = rx_sale + otc_sale
         
-        # COGS
         cost_rx = rx_sale / (p_pr/BASE_RX_COST)
         cost_otc = otc_sale * 0.65
         gm = tot_sale - (cost_rx + cost_otc)
         
-        # Staffing (90% Rule)
-        p_fte = inp[16] # Input 17
-        c_fte = inp[18] # Input 19
+        p_fte = inp[16]; c_fte = inp[18]
         
-        # Wages
         avail_p = (p_fte*40*13) + (inp[22]/100*inp[22]*13)
         req_p = rx_cnt/10.0
         p_ot = max(0, req_p - avail_p)
         w_p = (avail_p*inp[17]) + (p_ot*EMERGENCY_RATE*1.5)
         
         avail_c = c_fte*40*13
-        req_c = tot_sale/SALES_PER_CLK # Var 27
+        req_c = tot_sale/SALES_PER_CLK 
         c_ot = max(0, req_c - avail_c)
         w_c = (avail_c*inp[19]) + (c_ot*inp[19]*1.5)
         
-        # Benefits (Using Var 28)
         ben = (w_p + w_c) * (BENEFIT_PCT/100.0) 
         
-        # Expenses
         rent = tot_sale * LOC_RENT_RATE.get(p['location_code'], 0.03)
         exp = w_p + w_c + ben + rent + inp[7] + inp[20] + inp[23] + 3000
         
         depr = fin['fixed_assets']*0.02
         bad = inp[29]
-        inte = (fin['long_term_debt']+fin['notes_payable']) * INTEREST_RATE # Var 9
+        inte = (fin['long_term_debt']+fin['notes_payable']) * INTEREST_RATE
         
         opex = exp + depr + inte + bad
         profit = gm - opex + (fin['investments']*0.015)
         
-        # Cash & Balances
         fin['investments'] += (inp[9]-inp[11])
         fin['inventory_rx'] = max(0, fin['inventory_rx'] + inp[14] - cost_rx)
         fin['inventory_otc'] = max(0, fin['inventory_otc'] + inp[15] - cost_otc)
@@ -269,7 +253,6 @@ def calculate_results():
             
         fin['retained_earnings'] += profit
         
-        # Update Stats
         p['prev_stats'].update({
             'avg_price': p_pr, 'mkt_share': share*100, 
             'ad_index': df[df['id']==tid]['Promo'].values[0],
@@ -277,7 +260,6 @@ def calculate_results():
             'cogs_otc': cost_otc, 'avg_inv_otc': (fin['inventory_otc']+inp[15])/2
         })
         
-        # History
         def safe(n,d): return n/d if d!=0 else 0
         nw = fin['retained_earnings']
         ca = fin['cash']+fin['investments']+fin['inventory_rx']+fin['inventory_otc']
@@ -321,24 +303,9 @@ def render_instructor_ui():
         
     elif st.session_state.game_state == "SETUP_STEP_2":
         st.markdown('<div class="step-header">Step 2: Market Data (29 Variables)</div>', unsafe_allow_html=True)
-        st.info("Paste your 31-token string here (Period# + 29 Vars + 1 Misc). The system will use the 29 variables.")
+        st.info("Edit the Market Environment variables directly in the table below.")
         
-        # Raw String Paste
-        raw_val = " ".join(map(str, [1] + st.session_state.inst_data_list + [0])) # Dummy display
-        raw_str = st.text_area("Paste String", value=raw_val, height=70)
-        
-        if st.button("Parse String"):
-            try:
-                # Expecting ~31 tokens. 
-                # Token 0 = Period (Ignore for list), Token 1..29 = Vars, Token 30 = Misc
-                tokens = [float(x) for x in raw_str.split()]
-                if len(tokens) >= 30:
-                    st.session_state.inst_data_list = tokens[1:30] # Extract 29 vars
-                    st.toast("Parsed 29 Variables Successfully!", icon="✅"); st.rerun()
-                else: st.error(f"Need at least 30 tokens, got {len(tokens)}")
-            except: st.error("Parse Error")
-            
-        # Table Editor
+        # Table Editor Only (No Paste String)
         df_inst = pd.DataFrame({"Label": INST_LABELS_29, "Value": st.session_state.inst_data_list})
         edited = st.data_editor(df_inst, height=600, hide_index=True)
         
