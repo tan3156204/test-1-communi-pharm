@@ -5,45 +5,43 @@ import numpy as np
 # ==========================================
 # 1. SYSTEM CONFIG & STATE
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V16 (Classroom Ed.)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V17 (Control Ed.)", layout="wide")
 
-# Constants ตามคู่มือ
+# Constants
 BASE_COST_RX = 11.23
 CONST_FEE = 2.90
 WEEKS = 13
 EMERGENCY_LOAN_RATE = 0.20
-TAX_RATE = 0.0
 
-# Location Config (ค่าเช่าตามคู่มือ)
+# Location Config
 LOC_CONFIG = {
     1: {"name": "Medical Center", "rent": 0.045, "desc": "เน้นใบสั่งยา, ค่าเช่า 4.5%"},
     2: {"name": "Neighborhood", "rent": 0.030, "desc": "ชุมชน, ค่าเช่า 3.0%"},
     3: {"name": "Shopping Center", "rent": 0.025, "desc": "ห้างฯ, ค่าเช่า 2.5%"}
 }
 
-# Market Weights (ความสำคัญของปัจจัยในแต่ละทำเล)
+# Market Weights
 WEIGHTS = {
     1: {'price': 10, 'fee': 30, 'promo': 5, 'hours': 20, 'delivery': 5},
     2: {'price': 20, 'fee': 25, 'promo': 10, 'hours': 10, 'delivery': 10},
     3: {'price': 40, 'fee': 30, 'promo': 15, 'hours': 5, 'delivery': 0}
 }
 
-# Initialize Session State (จำลอง Database)
+# Initialize Session State
 if 'game_state' not in st.session_state:
     st.session_state.game_state = "SETUP" # SETUP, ACTIVE
     st.session_state.current_period = 1
-    st.session_state.teams = {} # เก็บข้อมูลทุกทีม
-    st.session_state.history = {} # เก็บประวัติผลลัพธ์
+    st.session_state.teams = {} 
+    st.session_state.history = {} 
 
 # ==========================================
-# 2. CALCULATION ENGINE (CORE LOGIC)
+# 2. CALCULATION ENGINE
 # ==========================================
 def run_period_processing():
-    """ฟังก์ชันนี้คือ 'Computer Program' ที่อาจารย์กด Run เพื่อประมวลผล"""
     period = st.session_state.current_period
     all_teams = st.session_state.teams
     
-    # 1. จัดกลุ่มแข่งตามทำเล (Competition)
+    # 1. จัดกลุ่มแข่งตามทำเล
     for loc_id in [1, 2, 3]:
         teams_in_loc = [tid for tid, t in all_teams.items() if t['loc'] == loc_id]
         if not teams_in_loc: continue
@@ -51,14 +49,11 @@ def run_period_processing():
         # 2. คำนวณ Market Share
         df_score = pd.DataFrame()
         for tid in teams_in_loc:
-            curr_inputs = all_teams[tid]['inputs_next'] # ดึงค่าที่นศ.กรอกมา
-            
-            # คำนวณราคาขาย
+            curr_inputs = all_teams[tid]['inputs_next']
             price = (BASE_COST_RX * (1 + curr_inputs[0]/100)) + curr_inputs[1] + CONST_FEE
             
             score = 0
             w = WEIGHTS[loc_id]
-            # Scoring Logic (Simplified)
             score += (1000/price) * w['price']
             score += (curr_inputs[7]/1000) * w['promo']
             score += (curr_inputs[6]/50) * w['hours']
@@ -67,17 +62,16 @@ def run_period_processing():
             
         df_score['share'] = df_score['score'] / df_score['score'].sum()
         
-        # 3. คำนวณงบการเงินรายทีม
-        market_size = 300000 if loc_id == 1 else 1200000 # สมมติ Market Size
+        # 3. คำนวณงบการเงิน
+        market_size = 300000 if loc_id == 1 else 1200000
         if loc_id == 3: market_size = 900000
         
         for idx, row in df_score.iterrows():
             tid = row['tid']
             share = row['share']
             inp = all_teams[tid]['inputs_next']
-            prev_bal = all_teams[tid]['balance_sheet'] # งบดุลปีก่อน
+            prev_bal = all_teams[tid]['balance_sheet']
             
-            # --- INCOME STATEMENT ---
             sales = share * market_size
             cogs = sales / (1 + (inp[0]/100))
             gross_margin = sales - cogs
@@ -87,11 +81,9 @@ def run_period_processing():
             fixed = inp[20] + inp[7] + 3000
             depr = 50000 * 0.025
             
-            # Interest
             inv_income = inp[9] * 0.02
             interest_exp = 0
             
-            # --- CASH FLOW LOGIC ---
             cash_begin = prev_bal['cash']
             purchases = inp[14] + inp[15]
             pay_ap = inp[28]
@@ -104,33 +96,25 @@ def run_period_processing():
             emergency_loan = 0
             if cash_end < 0:
                 emergency_loan = abs(cash_end) + 2000
-                interest_exp += emergency_loan * EMERGENCY_LOAN_RATE # Penalty
+                interest_exp += emergency_loan * EMERGENCY_LOAN_RATE
                 cash_end += emergency_loan
                 
-            # Special Penalty 999999
             if pay_ap > 200000: interest_exp += 29000000
             
             net_profit = (gross_margin - (wages + rent_exp + fixed + depr)) + inv_income - interest_exp
             
-            # --- UPDATE BALANCE SHEET ---
             inventory = prev_bal['inventory'] + purchases - cogs
             ar = prev_bal['ar'] + (sales * 0.1)
             ap = prev_bal['ap'] + purchases - pay_ap
-            
             retained_earnings = prev_bal['retained_earnings'] + net_profit
             
             new_bal = {
-                'cash': cash_end,
-                'inventory': inventory,
-                'ar': ar,
-                'fixed_assets': prev_bal['fixed_assets'] - depr,
-                'ap': ap,
-                'emergency_loan': emergency_loan,
-                'long_term_debt': 100000,
+                'cash': cash_end, 'inventory': inventory, 'ar': ar,
+                'fixed_assets': prev_bal['fixed_assets'] - depr, 'ap': ap,
+                'emergency_loan': emergency_loan, 'long_term_debt': 100000,
                 'retained_earnings': retained_earnings
             }
             
-            # Save History
             if tid not in st.session_state.history: st.session_state.history[tid] = []
             st.session_state.history[tid].append({
                 "period": period,
@@ -145,27 +129,36 @@ def run_period_processing():
                 }
             })
             
-            # Update Current State for Next Round
             all_teams[tid]['balance_sheet'] = new_bal
-            # Reset Inputs for next round (copy old ones as default)
             all_teams[tid]['inputs_prev'] = inp.copy()
-            all_teams[tid]['submitted'] = False
+            all_teams[tid]['status'] = "Pending" # Reset status
 
     st.session_state.current_period += 1
 
 # ==========================================
-# 3. INSTRUCTOR VIEW (ผู้คุมเกม)
+# 3. SIDEBAR (RESET BUTTON)
+# ==========================================
+with st.sidebar:
+    st.title("⚙️ System Control")
+    st.write("ปุ่มควบคุมระบบสำหรับเริ่มต้นใหม่")
+    if st.button("🔄 Reset Game (เริ่มใหม่)", type="primary"):
+        st.session_state.clear()
+        st.rerun()
+
+# ==========================================
+# 4. INSTRUCTOR VIEW
 # ==========================================
 def instructor_view():
-    st.header("👨‍🏫 Instructor Dashboard (ผู้คุมเกม)")
+    st.header("👨‍🏫 Instructor Dashboard")
     
     if st.session_state.game_state == "SETUP":
-        st.subheader("1. Setup Period 1 (เริ่มเกม)")
-        st.info("กำหนดจำนวนร้านและสร้างข้อมูลเริ่มต้นสำหรับ Period 1")
+        st.subheader("1. Game Setup (ตั้งค่าก่อนเริ่ม)")
+        st.info("กรุณากำหนดจำนวนทีม แล้วกดปุ่ม Start Game เพื่อเริ่ม Period 1")
         
         num_teams = st.number_input("จำนวนทีม (Stores)", 1, 10, 3)
-        if st.button("Initialize Game & Run Period 1"):
-            # Create Default Teams
+        
+        # --- BUTTON 1: START GAME ---
+        if st.button("🏁 Start Game (เริ่มเล่นเกม)"):
             default_inputs = [49, 0, 0, 1, 1, 1, 46, 600, 90, 2000, 3, 0, 0, 47, 40000, 16000, 0.8, 21, 1.2, 4.75, 8050, 99, 48, 898, 0, 1000, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0]
             default_bs = {'cash': 15000, 'inventory': 80000, 'ar': 45000, 'fixed_assets': 50000, 'ap': 30000, 'emergency_loan': 0, 'long_term_debt': 100000, 'retained_earnings': 60000}
             
@@ -177,145 +170,136 @@ def instructor_view():
                     'inputs_next': default_inputs.copy(),
                     'inputs_prev': default_inputs.copy(),
                     'balance_sheet': default_bs.copy(),
-                    'submitted': True # P1 auto-submitted
+                    'status': "Ready" # Pending, Draft, Ready
                 }
             
-            # Run Period 1 Calculation immediately
-            run_period_processing()
+            run_period_processing() # Run P1 automatically
             st.session_state.game_state = "ACTIVE"
             st.rerun()
             
-    else: # GAME ACTIVE
+    else: # ACTIVE GAME
         period = st.session_state.current_period
         st.subheader(f"Current Status: Period {period}")
         st.markdown("---")
         
-        # Monitor Student Submission
-        st.write("### 📡 สถานะการส่งงานของนักเรียน")
+        st.write("### 📡 สถานะผู้เล่น")
         status_data = []
-        ready_to_run = True
+        ready_count = 0
         for tid, data in st.session_state.teams.items():
-            status = "✅ Submitted" if data['submitted'] else "⏳ Waiting..."
-            if not data['submitted']: ready_to_run = False
-            status_data.append({"Team": tid, "Location": LOC_CONFIG[data['loc']]['name'], "Status": status})
+            status_text = "⚪ รอส่งข้อมูล"
+            if data['status'] == "Draft": status_text = "🟡 กำลังกรอก (Draft)"
+            if data['status'] == "Ready": 
+                status_text = "✅ ส่งแล้ว (Ready)"
+                ready_count += 1
+            
+            status_data.append({"Team": tid, "Location": LOC_CONFIG[data['loc']]['name'], "Status": status_text})
+        
         st.dataframe(pd.DataFrame(status_data), use_container_width=True)
         
-        # Control Panel
-        st.markdown("### ⚙️ Game Control")
-        if ready_to_run:
-            st.success("ทุกทีมส่งข้อมูลครบแล้ว สามารถรันผลลัพธ์ได้เลย")
+        # --- CONTROL PANEL ---
+        if ready_count == len(st.session_state.teams):
+            st.success("ทุกทีมพร้อมแล้ว! กด Run เพื่อประมวลผล")
         else:
-            st.warning("บางทีมยังไม่ส่งข้อมูล (กด Run เพื่อบังคับประมวลผลได้)")
-            
+            st.warning(f"มีทีมพร้อมส่ง {ready_count}/{len(st.session_state.teams)} ทีม")
+
         if st.button(f"🚀 Run Simulation (Process Period {period})", type="primary"):
             run_period_processing()
-            st.success("Processing Complete! Students can now view results.")
+            st.success("ประมวลผลเสร็จสิ้น!")
             st.rerun()
 
-        # View Master Report
-        st.markdown("---")
-        st.write("### 🏆 Master Report (ผลประกอบการรวม)")
-        if st.checkbox("Show All Teams Financials"):
-            # Combine history logic here
-            pass
-
 # ==========================================
-# 4. STUDENT VIEW (ผู้เล่น)
+# 5. STUDENT VIEW
 # ==========================================
 def student_view():
-    st.header("💊 Student Portal (ผู้เล่น)")
+    st.header("💊 Student Portal")
     
-    # Login
-    team_list = list(st.session_state.teams.keys())
-    if not team_list:
-        st.error("Instructor ยังไม่ได้เริ่มเกม")
+    if not st.session_state.teams:
+        st.error("Game hasn't started yet. (รออาจารย์กด Start Game)")
         return
 
-    my_team = st.selectbox("เลือกทีมของคุณ (Select Your Store)", team_list)
+    my_team = st.selectbox("เลือกทีมของคุณ (Select Your Store)", list(st.session_state.teams.keys()))
     team_data = st.session_state.teams[my_team]
     current_period = st.session_state.current_period
     
-    st.caption(f"Location: {LOC_CONFIG[team_data['loc']]['name']} | Status: {'✅ ส่งข้อมูลแล้ว' if team_data['submitted'] else '✍️ รอการตัดสินใจ'}")
-
-    # Tabs: Report (อดีต) vs Decisions (อนาคต)
-    tab1, tab2 = st.tabs([f"📊 ผลประกอบการ (Period {current_period-1})", f"📝 ตัดสินใจ (For Period {current_period})"])
+    # Check Status
+    is_submitted = team_data['status'] == "Ready"
+    
+    # Tabs
+    tab1, tab2 = st.tabs([f"📊 ผลลัพธ์ (Period {current_period-1})", f"📝 ตัดสินใจ (Period {current_period})"])
     
     with tab1:
-        # ดึงข้อมูล History ล่าสุด
         if my_team in st.session_state.history and st.session_state.history[my_team]:
             last_result = st.session_state.history[my_team][-1]
             inc = last_result['income_statement']
             bs = last_result['balance_sheet']
-            rat = last_result['ratios']
-            
-            st.markdown(f"### 📄 รายงานผลรอบที่ {last_result['period']}")
-            
-            # Metrics
-            c1, c2, c3 = st.columns(3)
+            st.markdown(f"### ผลประกอบการรอบที่ {last_result['period']}")
+            c1, c2 = st.columns(2)
             c1.metric("Net Profit", f"${inc['Net Profit']:,.0f}")
             c2.metric("Cash Balance", f"${bs['cash']:,.0f}")
-            c3.metric("Current Ratio", f"{rat['Current Ratio']:.2f}")
             
-            # Full Report
-            with st.expander("ดูงบการเงินฉบับเต็ม (Full Financial Statements)", expanded=True):
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.caption("Income Statement")
-                    st.dataframe(pd.DataFrame(inc.items(), columns=["Item", "Amount"]), hide_index=True)
-                with col_b:
-                    st.caption("Balance Sheet")
-                    st.dataframe(pd.DataFrame(bs.items(), columns=["Item", "Amount"]), hide_index=True)
+            with st.expander("ดูงบการเงินละเอียด"):
+                st.write("Income Statement:", inc)
+                st.write("Balance Sheet:", bs)
         else:
-            st.info("รอผลการรันรอบแรกจาก Instructor")
+            st.info("รอผลการรันรอบแรก")
 
     with tab2:
-        st.markdown(f"### ✍️ แบบฟอร์มตัดสินใจ (Period {current_period})")
+        st.markdown(f"### แบบฟอร์มตัดสินใจ รอบที่ {current_period}")
         
-        if team_data['submitted']:
-            st.success("คุณได้ส่งข้อมูลของรอบนี้เรียบร้อยแล้ว กรุณารอ Instructor ประมวลผล")
+        if is_submitted:
+            st.success("✅ คุณได้ยืนยันการส่งข้อมูลแล้ว (รออาจารย์ประมวลผล)")
+            if st.button("✏️ แก้ไขข้อมูล (Unsubmit)"):
+                st.session_state.teams[my_team]['status'] = "Draft"
+                st.rerun()
         else:
-            with st.form("decision_form"):
-                st.info("กรุณากรอกข้อมูลเพื่อใช้ในการแข่งขันรอบถัดไป")
-                
-                # Load previous inputs as default
-                defaults = team_data['inputs_prev']
-                new_inputs = defaults.copy()
-                
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown("**การตลาด & ราคา**")
-                    new_inputs[0] = st.number_input("1. Rx Markup (%)", value=defaults[0])
-                    new_inputs[7] = st.number_input("8. Promo Budget ($)", value=defaults[7])
-                    new_inputs[6] = st.number_input("7. Hours/Week", value=defaults[6])
-                
-                with c2:
-                    st.markdown("**การสั่งซื้อ & การเงิน**")
-                    new_inputs[14] = st.number_input("15. Rx Purchase ($)", value=defaults[14])
-                    new_inputs[15] = st.number_input("16. Other Purchase ($)", value=defaults[15])
-                    new_inputs[28] = st.number_input("29. Pay A/P (จ่ายหนี้) ($)", value=0, help="ใส่ 0 ถ้าไม่อยากจ่าย, อย่าใส่เกินเงินที่มี")
-
-                submitted = st.form_submit_button("Submit Decisions")
-                if submitted:
-                    # Save to central state
-                    st.session_state.teams[my_team]['inputs_next'] = new_inputs
-                    st.session_state.teams[my_team]['submitted'] = True
-                    st.success("ส่งข้อมูลสำเร็จ! รอ Instructor รันผลลัพธ์")
-                    st.rerun()
+            st.info("กรอกตัวเลข แล้วกด 'Save' เพื่อบันทึกค่า หรือ 'Submit' เพื่อส่งอาจารย์")
+            
+            # Form without 'st.form' to allow Save Draft functionality
+            defaults = team_data['inputs_next']
+            new_inputs = defaults.copy()
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**การตลาด**")
+                new_inputs[0] = st.number_input("1. Rx Markup (%)", value=defaults[0], key="i0")
+                new_inputs[7] = st.number_input("8. Promo ($)", value=defaults[7], key="i7")
+                new_inputs[6] = st.number_input("7. Hours/Week", value=defaults[6], key="i6")
+            with col2:
+                st.markdown("**การเงิน & สต็อก**")
+                new_inputs[14] = st.number_input("15. Rx Purchase ($)", value=defaults[14], key="i14")
+                new_inputs[28] = st.number_input("29. Pay A/P ($)", value=defaults[28], key="i28")
+            
+            st.markdown("---")
+            b1, b2 = st.columns(2)
+            
+            # --- BUTTON 2: SAVE DRAFT ---
+            if b1.button("💾 บันทึกค่า (Save Draft)"):
+                st.session_state.teams[my_team]['inputs_next'] = new_inputs
+                st.session_state.teams[my_team]['status'] = "Draft"
+                st.toast("บันทึกข้อมูลเรียบร้อย (ยังไม่ส่ง)", icon="💾")
+                st.rerun()
+            
+            # --- BUTTON 3: SUBMIT ---
+            if b2.button("✅ ยืนยันการส่ง (Submit)", type="primary"):
+                st.session_state.teams[my_team]['inputs_next'] = new_inputs
+                st.session_state.teams[my_team]['status'] = "Ready"
+                st.success("ส่งข้อมูลให้อาจารย์แล้ว!")
+                st.rerun()
 
 # ==========================================
-# 5. MAIN APP ROUTER
+# 6. APP ROUTER
 # ==========================================
 role = st.sidebar.radio("เลือกบทบาท (Role)", ["Student (ผู้เล่น)", "Instructor (ผู้สอน)"])
 
 if role == "Instructor (ผู้สอน)":
-    pwd = st.sidebar.text_input("Password", type="password")
+    pwd = st.sidebar.text_input("Instructor Password", type="password")
     if pwd == "admin":
         instructor_view()
     else:
-        st.sidebar.warning("Incorrect Password (Hint: admin)")
+        st.sidebar.warning("ใส่รหัสผ่าน: admin")
 else:
     if st.session_state.game_state == "SETUP":
-        st.title("⏳ Waiting for Instructor...")
-        st.info("กรุณารอให้อาจารย์ตั้งค่าเกมและรัน Period 1 ให้เสร็จสิ้นก่อน")
+        st.title("⏳ Game Lobby")
+        st.warning("รอให้อาจารย์กดปุ่ม Start Game...")
     else:
         student_view()
