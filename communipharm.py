@@ -3,234 +3,319 @@ import pandas as pd
 import numpy as np
 
 # ==========================================
-# 1. GAME SETTINGS & CONSTANTS (ตามคู่มือ)
+# 1. SYSTEM CONFIG & STATE
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V15 (Original Settings)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V16 (Classroom Ed.)", layout="wide")
 
-# ค่าคงที่พื้นฐาน
+# Constants ตามคู่มือ
 BASE_COST_RX = 11.23
 CONST_FEE = 2.90
-WEEKS_PER_PERIOD = 13  # 1 รอบ = 3 เดือน (ไตรมาส)
+WEEKS = 13
+EMERGENCY_LOAN_RATE = 0.20
+TAX_RATE = 0.0
 
-# --- LOCATION CONFIGURATION (ตามคู่มือหน้า 13:25) ---
-LOCATION_CONFIG = {
-    1: {
-        "name": "Medical Center",
-        "desc": "ร้านยาในศูนย์การแพทย์ (เน้นยาตามใบสั่ง)",
-        "rent_rate": 0.045, # 4.5% ของยอดขาย
-        "area_size": "800-1300 sq.ft"
-    },
-    2: {
-        "name": "Neighborhood",
-        "desc": "ร้านยาใกล้บ้าน (ชุมชน 20-30k คน)",
-        "rent_rate": 0.030, # 3.0% ของยอดขาย
-        "area_size": "Medium"
-    },
-    3: {
-        "name": "Shopping Center",
-        "desc": "ร้านยาในห้าง (Chain Store)",
-        "rent_rate": 0.025, # 2.5% ของยอดขาย
-        "area_size": "3500-3800 sq.ft"
-    }
+# Location Config (ค่าเช่าตามคู่มือ)
+LOC_CONFIG = {
+    1: {"name": "Medical Center", "rent": 0.045, "desc": "เน้นใบสั่งยา, ค่าเช่า 4.5%"},
+    2: {"name": "Neighborhood", "rent": 0.030, "desc": "ชุมชน, ค่าเช่า 3.0%"},
+    3: {"name": "Shopping Center", "rent": 0.025, "desc": "ห้างฯ, ค่าเช่า 2.5%"}
 }
 
-# --- COMPETITOR DATA (BOTS) ---
-COMPETITORS = [
-    {"name": "LhaiJai", "loc": 1, "inputs": [49, 0.5, 0, 0, 1, 1, 48, 600, 100, 2000, 1, 0, 0, 55, 40000, 24000, 1, 9.75, 1, 4.9, 8050, 99, 48, 900, 0, 1000, 0, 0, 999999, 0, 0, 0, 1, 1, 1, 0]},
-    {"name": "N&M", "loc": 2, "inputs": [30, 2.5, 0, 1, 1, 0, 60, 1500, 40, 3000, 3, 2000, 1, 38, 60000, 80000, 1, 21, 6.6, 4.75, 7000, 50, 48, 1299, 0, 1500, 0, 0, 999999, 0, 0, 1, 1, 1, 1, 0]},
-    {"name": "NueyDeng", "loc": 2, "inputs": [30, 2.4, 0.25, 0, 1, 0, 70, 1900, 40, 3000, 3, 2000, 1, 39, 65000, 120000, 1.3, 22.75, 7, 5, 8000, 50, 48, 1200, 0, 2300, 0, 0, 999999, 0, 0, 0, 0, 1, 1, 0]},
-    {"name": "Puaypepakor", "loc": 2, "inputs": [40, 0.9, 0.25, 0, 0, 0, 70, 1500, 33, 2000, 3, 0, 0, 34, 65000, 145000, 1.5, 19.5, 6.5, 4.75, 8000, 66, 48, 1200, 0, 2200, 0, 0, 99999, 0, 0, 0, 1, 1, 1, 0]},
-    {"name": "HappyPills", "loc": 3, "inputs": [35, 2.2, 0, 0, 0, 1, 90, 2200, 34, 2000, 1, 0, 0, 33, 85000, 145000, 1.5, 20, 8.9, 4.75, 8000, 30, 48, 2000, 0, 2500, 0, 0, 999999, 0, 0, 0, 0, 1, 1, 0]},
-    {"name": "Oceanville", "loc": 3, "inputs": [38, 1.8, 0, 0, 1, 0, 75, 3000, 10, 10000, 2, 10000, 3, 37, 65000, 75000, 1.75, 22, 8, 5.12, 8000, 50, 48, 1300, 0, 2200, 0, 0, 999999, 0, 0, 0, 1, 0, 1, 0]}
-]
-
-# Market Weights (เหมือนเดิม)
-WEIGHTS_RX = {
-    1: {'price': 10, 'fee': 30, 'promo': 5, 'hours': 20, 'delivery': 5, 'records': 10, 'credit': 5, 'inv': 5},
-    2: {'price': 20, 'fee': 25, 'promo': 10, 'hours': 10, 'delivery': 10, 'records': 5, 'credit': 5, 'inv': 5},
-    3: {'price': 40, 'fee': 30, 'promo': 15, 'hours': 5, 'delivery': 0, 'records': 0, 'credit': 5, 'inv': 0}
+# Market Weights (ความสำคัญของปัจจัยในแต่ละทำเล)
+WEIGHTS = {
+    1: {'price': 10, 'fee': 30, 'promo': 5, 'hours': 20, 'delivery': 5},
+    2: {'price': 20, 'fee': 25, 'promo': 10, 'hours': 10, 'delivery': 10},
+    3: {'price': 40, 'fee': 30, 'promo': 15, 'hours': 5, 'delivery': 0}
 }
 
+# Initialize Session State (จำลอง Database)
+if 'game_state' not in st.session_state:
+    st.session_state.game_state = "SETUP" # SETUP, ACTIVE
+    st.session_state.current_period = 1
+    st.session_state.teams = {} # เก็บข้อมูลทุกทีม
+    st.session_state.history = {} # เก็บประวัติผลลัพธ์
+
 # ==========================================
-# 2. LOGIC ENGINE
+# 2. CALCULATION ENGINE (CORE LOGIC)
 # ==========================================
-def run_simulation(user_inputs, user_loc_id):
-    # Setup User Team
-    user_team = {"name": "Thaikritosot (You)", "loc": user_loc_id, "inputs": user_inputs}
-    all_teams = [user_team] + COMPETITORS
+def run_period_processing():
+    """ฟังก์ชันนี้คือ 'Computer Program' ที่อาจารย์กด Run เพื่อประมวลผล"""
+    period = st.session_state.current_period
+    all_teams = st.session_state.teams
     
-    financial_report = {} 
-
+    # 1. จัดกลุ่มแข่งตามทำเล (Competition)
     for loc_id in [1, 2, 3]:
-        teams_in_loc = [t for t in all_teams if t['loc'] == loc_id]
+        teams_in_loc = [tid for tid, t in all_teams.items() if t['loc'] == loc_id]
         if not teams_in_loc: continue
         
-        # --- A. RANKING & MARKET SHARE ---
-        df = pd.DataFrame()
-        for t in teams_in_loc:
-            i = t['inputs']
-            price = (BASE_COST_RX * (1 + i[0]/100)) + i[1] + CONST_FEE
-            df = pd.concat([df, pd.DataFrame([{
-                'name': t['name'], 'inputs': i, 'price': price, 
-                'promo': i[7], 'hours': i[6]
-            }])], ignore_index=True)
+        # 2. คำนวณ Market Share
+        df_score = pd.DataFrame()
+        for tid in teams_in_loc:
+            curr_inputs = all_teams[tid]['inputs_next'] # ดึงค่าที่นศ.กรอกมา
+            
+            # คำนวณราคาขาย
+            price = (BASE_COST_RX * (1 + curr_inputs[0]/100)) + curr_inputs[1] + CONST_FEE
+            
+            score = 0
+            w = WEIGHTS[loc_id]
+            # Scoring Logic (Simplified)
+            score += (1000/price) * w['price']
+            score += (curr_inputs[7]/1000) * w['promo']
+            score += (curr_inputs[6]/50) * w['hours']
+            
+            df_score = pd.concat([df_score, pd.DataFrame({'tid': tid, 'score': score}, index=[0])])
+            
+        df_score['share'] = df_score['score'] / df_score['score'].sum()
         
-        w = WEIGHTS_RX[loc_id]
-        min_price = df['price'].min()
-        max_promo = df['promo'].max() if df['promo'].max() > 0 else 1
+        # 3. คำนวณงบการเงินรายทีม
+        market_size = 300000 if loc_id == 1 else 1200000 # สมมติ Market Size
+        if loc_id == 3: market_size = 900000
         
-        # Scoring Logic
-        df['score'] = ((min_price/df['price'])*w.get('price',0)*3) + ((df['promo']/max_promo)*w.get('promo',0)) + ((df['hours']/168)*w.get('hours',0)*2)
-        df['share'] = df['score'] / df['score'].sum()
-
-        # --- B. FINANCIALS (Manual Logic) ---
-        MARKET_SIZE = 280000 if loc_id == 1 else 1300000
-        if loc_id == 3: MARKET_SIZE = 800000
-
-        for idx, row in df.iterrows():
-            if row['name'] != "Thaikritosot (You)": continue
+        for idx, row in df_score.iterrows():
+            tid = row['tid']
+            share = row['share']
+            inp = all_teams[tid]['inputs_next']
+            prev_bal = all_teams[tid]['balance_sheet'] # งบดุลปีก่อน
             
-            inp = row['inputs']
-            
-            # 1. Sales
-            sales = row['share'] * MARKET_SIZE
-            
-            # 2. COGS
+            # --- INCOME STATEMENT ---
+            sales = share * market_size
             cogs = sales / (1 + (inp[0]/100))
             gross_margin = sales - cogs
             
-            # 3. Expenses
-            # Wages
-            wage_cost_hr = (inp[16]*inp[17]) + (inp[18]*inp[19])
-            wages_total = wage_cost_hr * inp[6] * WEEKS_PER_PERIOD
+            rent_exp = sales * LOC_CONFIG[loc_id]['rent']
+            wages = (inp[16]*inp[17] + inp[18]*inp[19]) * inp[6] * WEEKS
+            fixed = inp[20] + inp[7] + 3000
+            depr = 50000 * 0.025
             
-            # Rent (คำนวณตามคู่มือ: % ของยอดขาย)
-            rent_rate = LOCATION_CONFIG[loc_id]["rent_rate"]
-            rent_expense = sales * rent_rate
+            # Interest
+            inv_income = inp[9] * 0.02
+            interest_exp = 0
             
-            # Depreciation (Straight Line)
-            fixed_assets = 50000 # สมมติ
-            depreciation = fixed_assets * (0.10 / 4) # สมมติ 10% ต่อปี / 4 ไตรมาส
-            
-            # Other Fixed
-            mgr_salary = inp[20]
-            promo = inp[7]
-            other_fixed = 3000
-            
-            total_operating_expenses = wages_total + rent_expense + depreciation + mgr_salary + promo + other_fixed
-            
-            # 4. Interest Income / Expense
-            # Input 10 = Investment, Input 32 = Interest Rate (Assume %)
-            investment_income = inp[9] * 0.015 # สมมติผลตอบแทน 1.5% ต่อไตรมาส
-            
-            # Emergency Loan Interest (Logic เดิมที่ถูกต้อง)
-            cash_begin = 15000
+            # --- CASH FLOW LOGIC ---
+            cash_begin = prev_bal['cash']
             purchases = inp[14] + inp[15]
-            ap_payment = inp[28]
-            cash_in = sales * 0.9
+            pay_ap = inp[28]
             
-            # Cash Flow Check
-            cash_out_immediate = wages_total + rent_expense + mgr_salary + promo + other_fixed
-            cash_balance = cash_begin + cash_in - purchases - ap_payment - cash_out_immediate
+            cash_in = sales * 0.9 + inv_income
+            cash_out = wages + rent_exp + fixed + pay_ap + purchases
+            
+            cash_end = cash_begin + cash_in - cash_out
             
             emergency_loan = 0
-            interest_expense = 0
-            if cash_balance < 0:
-                emergency_loan = abs(cash_balance) + 2000
-                interest_expense = emergency_loan * 0.20 # 20% Penalty
-                cash_balance += emergency_loan
-            
-            # Special Penalty for 999999
-            if ap_payment > 100000: interest_expense += 29000000
+            if cash_end < 0:
+                emergency_loan = abs(cash_end) + 2000
+                interest_exp += emergency_loan * EMERGENCY_LOAN_RATE # Penalty
+                cash_end += emergency_loan
                 
-            # Net Interest
-            net_interest = investment_income - interest_expense
+            # Special Penalty 999999
+            if pay_ap > 200000: interest_exp += 29000000
             
-            # 5. Net Profit
-            # Formula: (Gross Margin - Expenses) + Interest Income
-            net_profit = (gross_margin - total_operating_expenses) + net_interest
+            net_profit = (gross_margin - (wages + rent_exp + fixed + depr)) + inv_income - interest_exp
             
-            # Report Data
-            financial_report = {
-                "Loc Name": LOCATION_CONFIG[loc_id]["name"],
-                "Rent Rate": rent_rate * 100,
-                "Income Statement": {
-                    "Sales": sales,
-                    "COGS": cogs,
-                    "Gross Margin": gross_margin,
-                    "Wages": wages_total,
-                    "Rent": rent_expense,
-                    "Depreciation": depreciation,
-                    "Promo": promo,
-                    "Mgr Salary": mgr_salary,
-                    "Other Fixed": other_fixed,
-                    "Total Expenses": total_operating_expenses,
-                    "Operating Profit": gross_margin - total_operating_expenses,
-                    "Interest Income": investment_income,
-                    "Interest Expense": interest_expense,
-                    "Net Profit": net_profit
-                },
-                "Balance Sheet": {
-                    "Cash": cash_balance,
-                    "Inventory": 80000 + purchases - cogs,
-                    "Emergency Loan": emergency_loan
-                }
+            # --- UPDATE BALANCE SHEET ---
+            inventory = prev_bal['inventory'] + purchases - cogs
+            ar = prev_bal['ar'] + (sales * 0.1)
+            ap = prev_bal['ap'] + purchases - pay_ap
+            
+            retained_earnings = prev_bal['retained_earnings'] + net_profit
+            
+            new_bal = {
+                'cash': cash_end,
+                'inventory': inventory,
+                'ar': ar,
+                'fixed_assets': prev_bal['fixed_assets'] - depr,
+                'ap': ap,
+                'emergency_loan': emergency_loan,
+                'long_term_debt': 100000,
+                'retained_earnings': retained_earnings
             }
+            
+            # Save History
+            if tid not in st.session_state.history: st.session_state.history[tid] = []
+            st.session_state.history[tid].append({
+                "period": period,
+                "income_statement": {
+                    "Sales": sales, "COGS": cogs, "Gross Margin": gross_margin,
+                    "Expenses": wages+rent_exp+fixed+depr, "Interest": interest_exp, "Net Profit": net_profit
+                },
+                "balance_sheet": new_bal,
+                "ratios": {
+                    "ROS": (net_profit/sales)*100,
+                    "Current Ratio": (cash_end+inventory+ar)/(ap+emergency_loan) if (ap+emergency_loan)>0 else 99
+                }
+            })
+            
+            # Update Current State for Next Round
+            all_teams[tid]['balance_sheet'] = new_bal
+            # Reset Inputs for next round (copy old ones as default)
+            all_teams[tid]['inputs_prev'] = inp.copy()
+            all_teams[tid]['submitted'] = False
 
-    return financial_report
+    st.session_state.current_period += 1
 
 # ==========================================
-# 3. GUI
+# 3. INSTRUCTOR VIEW (ผู้คุมเกม)
 # ==========================================
-st.sidebar.header("🛠️ Thaikritosot Settings")
-
-# Location Selector
-loc_select = st.sidebar.selectbox("เลือกทำเล (Location)", [1, 2, 3], format_func=lambda x: f"{x}: {LOCATION_CONFIG[x]['name']}")
-st.sidebar.caption(f"ℹ️ {LOCATION_CONFIG[loc_select]['desc']} | ค่าเช่า: {LOCATION_CONFIG[loc_select]['rent_rate']*100}% ของยอดขาย")
-
-def user_controls():
-    defaults = [49, 0, 0, 1, 1, 1, 46, 600, 90, 2000, 3, 0, 0, 47, 40000, 16000, 0.8, 21, 1.2, 4.75, 8050, 99, 48, 898, 0, 1000, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0]
-    inputs = [0] * 36
+def instructor_view():
+    st.header("👨‍🏫 Instructor Dashboard (ผู้คุมเกม)")
     
-    with st.sidebar.expander("💰 Financials", expanded=True):
-        inputs[28] = st.number_input("29. Pay A/P ($)", value=0)
-        inputs[9] = st.number_input("10. Current Investment ($)", value=2000)
-    
-    with st.sidebar.expander("🏪 Operations", expanded=True):
-        inputs[6] = st.number_input("7. Hours/Week", value=defaults[6])
-        inputs[0] = st.number_input("1. Rx Markup (%)", value=defaults[0])
-        inputs[7] = st.number_input("8. Promo ($)", value=defaults[7])
+    if st.session_state.game_state == "SETUP":
+        st.subheader("1. Setup Period 1 (เริ่มเกม)")
+        st.info("กำหนดจำนวนร้านและสร้างข้อมูลเริ่มต้นสำหรับ Period 1")
         
-    with st.sidebar.expander("📦 Inventory", expanded=False):
-        inputs[14] = st.number_input("15. Rx Purchase ($)", value=defaults[14])
-        inputs[15] = st.number_input("16. Other Purchase ($)", value=defaults[15])
-    
-    for i in range(36):
-        if inputs[i] == 0: inputs[i] = defaults[i]
-    return inputs
+        num_teams = st.number_input("จำนวนทีม (Stores)", 1, 10, 3)
+        if st.button("Initialize Game & Run Period 1"):
+            # Create Default Teams
+            default_inputs = [49, 0, 0, 1, 1, 1, 46, 600, 90, 2000, 3, 0, 0, 47, 40000, 16000, 0.8, 21, 1.2, 4.75, 8050, 99, 48, 898, 0, 1000, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0]
+            default_bs = {'cash': 15000, 'inventory': 80000, 'ar': 45000, 'fixed_assets': 50000, 'ap': 30000, 'emergency_loan': 0, 'long_term_debt': 100000, 'retained_earnings': 60000}
+            
+            for i in range(num_teams):
+                tid = f"Store {i+1}"
+                loc = (i % 3) + 1
+                st.session_state.teams[tid] = {
+                    'loc': loc,
+                    'inputs_next': default_inputs.copy(),
+                    'inputs_prev': default_inputs.copy(),
+                    'balance_sheet': default_bs.copy(),
+                    'submitted': True # P1 auto-submitted
+                }
+            
+            # Run Period 1 Calculation immediately
+            run_period_processing()
+            st.session_state.game_state = "ACTIVE"
+            st.rerun()
+            
+    else: # GAME ACTIVE
+        period = st.session_state.current_period
+        st.subheader(f"Current Status: Period {period}")
+        st.markdown("---")
+        
+        # Monitor Student Submission
+        st.write("### 📡 สถานะการส่งงานของนักเรียน")
+        status_data = []
+        ready_to_run = True
+        for tid, data in st.session_state.teams.items():
+            status = "✅ Submitted" if data['submitted'] else "⏳ Waiting..."
+            if not data['submitted']: ready_to_run = False
+            status_data.append({"Team": tid, "Location": LOC_CONFIG[data['loc']]['name'], "Status": status})
+        st.dataframe(pd.DataFrame(status_data), use_container_width=True)
+        
+        # Control Panel
+        st.markdown("### ⚙️ Game Control")
+        if ready_to_run:
+            st.success("ทุกทีมส่งข้อมูลครบแล้ว สามารถรันผลลัพธ์ได้เลย")
+        else:
+            st.warning("บางทีมยังไม่ส่งข้อมูล (กด Run เพื่อบังคับประมวลผลได้)")
+            
+        if st.button(f"🚀 Run Simulation (Process Period {period})", type="primary"):
+            run_period_processing()
+            st.success("Processing Complete! Students can now view results.")
+            st.rerun()
 
-inputs = user_controls()
+        # View Master Report
+        st.markdown("---")
+        st.write("### 🏆 Master Report (ผลประกอบการรวม)")
+        if st.checkbox("Show All Teams Financials"):
+            # Combine history logic here
+            pass
 
-# Run Simulation
-report = run_simulation(inputs, loc_select)
+# ==========================================
+# 4. STUDENT VIEW (ผู้เล่น)
+# ==========================================
+def student_view():
+    st.header("💊 Student Portal (ผู้เล่น)")
+    
+    # Login
+    team_list = list(st.session_state.teams.keys())
+    if not team_list:
+        st.error("Instructor ยังไม่ได้เริ่มเกม")
+        return
 
-st.title("💊 Communi-Pharm Simulator V15")
-st.markdown("**Original Game Settings Edition:** ปรับค่าเช่าและงบการเงินตามคู่มือ")
+    my_team = st.selectbox("เลือกทีมของคุณ (Select Your Store)", team_list)
+    team_data = st.session_state.teams[my_team]
+    current_period = st.session_state.current_period
+    
+    st.caption(f"Location: {LOC_CONFIG[team_data['loc']]['name']} | Status: {'✅ ส่งข้อมูลแล้ว' if team_data['submitted'] else '✍️ รอการตัดสินใจ'}")
 
-if report:
-    inc = report['Income Statement']
+    # Tabs: Report (อดีต) vs Decisions (อนาคต)
+    tab1, tab2 = st.tabs([f"📊 ผลประกอบการ (Period {current_period-1})", f"📝 ตัดสินใจ (For Period {current_period})"])
     
-    # Header Metrics
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Location", report['Loc Name'])
-    c2.metric("Rent Expense", f"${inc['Rent']:,.0f}", f"({report['Rent Rate']}%)")
-    c3.metric("Sales", f"${inc['Sales']:,.0f}")
-    c4.metric("Net Profit", f"${inc['Net Profit']:,.0f}", delta_color="normal" if inc['Net Profit']>0 else "inverse")
-    
-    # Detailed Income Statement
-    st.subheader("📄 งบกำไรขาดทุน (Income Statement)")
-    st.markdown("คำนวณตามสูตร: `(Gross Margin - Expenses) + Net Interest`")
-    
-    # Data Preparation
-    data = [
-        ("
+    with tab1:
+        # ดึงข้อมูล History ล่าสุด
+        if my_team in st.session_state.history and st.session_state.history[my_team]:
+            last_result = st.session_state.history[my_team][-1]
+            inc = last_result['income_statement']
+            bs = last_result['balance_sheet']
+            rat = last_result['ratios']
+            
+            st.markdown(f"### 📄 รายงานผลรอบที่ {last_result['period']}")
+            
+            # Metrics
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Net Profit", f"${inc['Net Profit']:,.0f}")
+            c2.metric("Cash Balance", f"${bs['cash']:,.0f}")
+            c3.metric("Current Ratio", f"{rat['Current Ratio']:.2f}")
+            
+            # Full Report
+            with st.expander("ดูงบการเงินฉบับเต็ม (Full Financial Statements)", expanded=True):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.caption("Income Statement")
+                    st.dataframe(pd.DataFrame(inc.items(), columns=["Item", "Amount"]), hide_index=True)
+                with col_b:
+                    st.caption("Balance Sheet")
+                    st.dataframe(pd.DataFrame(bs.items(), columns=["Item", "Amount"]), hide_index=True)
+        else:
+            st.info("รอผลการรันรอบแรกจาก Instructor")
+
+    with tab2:
+        st.markdown(f"### ✍️ แบบฟอร์มตัดสินใจ (Period {current_period})")
+        
+        if team_data['submitted']:
+            st.success("คุณได้ส่งข้อมูลของรอบนี้เรียบร้อยแล้ว กรุณารอ Instructor ประมวลผล")
+        else:
+            with st.form("decision_form"):
+                st.info("กรุณากรอกข้อมูลเพื่อใช้ในการแข่งขันรอบถัดไป")
+                
+                # Load previous inputs as default
+                defaults = team_data['inputs_prev']
+                new_inputs = defaults.copy()
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**การตลาด & ราคา**")
+                    new_inputs[0] = st.number_input("1. Rx Markup (%)", value=defaults[0])
+                    new_inputs[7] = st.number_input("8. Promo Budget ($)", value=defaults[7])
+                    new_inputs[6] = st.number_input("7. Hours/Week", value=defaults[6])
+                
+                with c2:
+                    st.markdown("**การสั่งซื้อ & การเงิน**")
+                    new_inputs[14] = st.number_input("15. Rx Purchase ($)", value=defaults[14])
+                    new_inputs[15] = st.number_input("16. Other Purchase ($)", value=defaults[15])
+                    new_inputs[28] = st.number_input("29. Pay A/P (จ่ายหนี้) ($)", value=0, help="ใส่ 0 ถ้าไม่อยากจ่าย, อย่าใส่เกินเงินที่มี")
+
+                submitted = st.form_submit_button("Submit Decisions")
+                if submitted:
+                    # Save to central state
+                    st.session_state.teams[my_team]['inputs_next'] = new_inputs
+                    st.session_state.teams[my_team]['submitted'] = True
+                    st.success("ส่งข้อมูลสำเร็จ! รอ Instructor รันผลลัพธ์")
+                    st.rerun()
+
+# ==========================================
+# 5. MAIN APP ROUTER
+# ==========================================
+role = st.sidebar.radio("เลือกบทบาท (Role)", ["Student (ผู้เล่น)", "Instructor (ผู้สอน)"])
+
+if role == "Instructor (ผู้สอน)":
+    pwd = st.sidebar.text_input("Password", type="password")
+    if pwd == "admin":
+        instructor_view()
+    else:
+        st.sidebar.warning("Incorrect Password (Hint: admin)")
+else:
+    if st.session_state.game_state == "SETUP":
+        st.title("⏳ Waiting for Instructor...")
+        st.info("กรุณารอให้อาจารย์ตั้งค่าเกมและรัน Period 1 ให้เสร็จสิ้นก่อน")
+    else:
+        student_view()
