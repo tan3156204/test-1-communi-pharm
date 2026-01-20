@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V33 (Clean UI)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V32 (Full Params)", layout="wide")
 
 st.markdown("""
 <style>
@@ -37,18 +37,18 @@ INPUT_LABELS = [
     "34. Ben: Health (0/1)", "35. 3rd Party (0/1)", "36. HMO Bid ($)"
 ]
 
-# Instructor Data Labels (Exactly 29 Variables)
-INST_LABELS_29 = [
-    "1. Avg Rx Ing Cost ($)", "2. Avg 3rd-Party Copay", "3. Avg 3rd-Party Fee",
-    "4. % Market 3rd-Party", "5. Max Ad Allow ($)", "6. % AR (Medical)",
-    "7. % AR (Neighbor)", "8. % AR (Shopping)", "9. Interest Rate (%)",
-    "10. Avg Rx Volume", "11. Avg OTC Sales ($)", "12. GM Slippage Rate",
-    "13. # Periods/Year", "14. % 3rd-Party Lag", "15. % AR Lag",
-    "16. MF Value/Share", "17. Date (Unused)", "18. Date (Month)",
+# Instructor Data Labels (Based on Guide & String Analysis)
+INST_LABELS = [
+    "1. Period #", "2. Avg Rx Ing Cost ($)", "3. Avg 3rd-Party Copay", 
+    "4. Avg 3rd-Party Fee", "5. % Market 3rd-Party", "6. Max Ad Allow ($)",
+    "7. % AR (Medical)", "8. % AR (Neighbor)", "9. % AR (Shopping)",
+    "10. Interest Rate (%)", "11. Avg Rx Volume", "12. Avg OTC Sales ($)",
+    "13. GM Slippage Rate", "14. # Periods/Year", "15. % 3rd-Party Lag",
+    "16. % AR Lag", "17. MF Value/Share", "18. Date (Month)",
     "19. Date (Day)", "20. Date (Year)", "21. Inflation Rate (%)",
     "22. Rx Purch Index", "23. OTC Purch Index", "24. Savings Rate (%)",
     "25. End MF Quote", "26. CD Interest (%)", "27. Sales/Clerk/Hr ($)",
-    "28. Benefits (%)", "29. Emergency Rate/Misc"
+    "28. Benefits (%)", "29. Emergency/OT Rate (Est)", "30. Unused", "31. Unused"
 ]
 
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
@@ -72,12 +72,13 @@ if 'game_state' not in st.session_state:
     st.session_state.global_period = 1
     st.session_state.players = {}
 
-# Default Instructor Data (29 Variables)
+# Default Instructor Data (As List)
 if 'inst_data_list' not in st.session_state:
+    # Based on your provided string example
     st.session_state.inst_data_list = [
-        11.23, 2.0, 2.75, 46.43, 1200.0, 30.2, 21.2, 9.34, 10.5, 
-        5949.0, 74500.0, 0.1, 6.0, 14.4, 11.2, 0.0, 0.0, 26.4, 6.0, 30.0, 
-        89.0, 1.1, 77.0, 55.0, 5.25, 27.65, 7.88, 28.5, 23.0
+        1, 11.23, 2, 2.75, 46.43, 1200, 30.2, 21.2, 9.34, 10.5, 
+        5949, 74500, 0.1, 6, 14.4, 11.2, 0, 0, 26.4, 6, 30, 89, 
+        1.1, 77, 55, 5.25, 28.5, 23, 400.0, 0, 0
     ]
 
 if 'rx_weights_df' not in st.session_state: st.session_state.rx_weights_df = pd.DataFrame(RX_WEIGHTS_CONFIG)
@@ -114,41 +115,50 @@ def initialize_teams(num_teams):
 def calculate_results():
     store_list = [p for p in st.session_state.players.values()]
     num_stores = len(store_list)
+    
+    # --- PARSE INSTRUCTOR DATA ---
+    # Using specific indices from the 1-29+ list
+    # Note: Lists are 0-indexed in Python
     inst = st.session_state.inst_data_list
     
-    BASE_RX_COST = inst[0]      # 1. Avg Rx Ing Cost
-    CONST_FEE = 2.90            
-    AD_LIMIT = inst[4]          # 5. Max Ad Allow
-    INTEREST_RATE = inst[8]/100 # 9. Interest Rate
-    RX_MKT_VOL = inst[9]        # 10. Avg Rx Vol
-    OTC_MKT_VAL = inst[10]      # 11. Avg OTC Sales
-    SALES_PER_CLK = inst[26]    # 27. Sales/Clerk/Hr
-    BENEFIT_PCT = inst[27]      # 28. Benefits %
-    EMERGENCY_RATE = 400.0      
-    if inst[28] > 100: EMERGENCY_RATE = inst[28] 
+    BASE_RX_COST = inst[1]     # 2. Avg Rx Ing Cost
+    AD_LIMIT = inst[5]         # 6. Max Ad Allow
+    LOAN_INTEREST = inst[9]/100.0 # 10. Interest Rate
+    RX_MKT_VOL = inst[10]      # 11. Avg Rx Vol
+    OTC_MKT_VAL = inst[11]     # 12. Avg OTC Sales
+    SALES_PER_CLK = inst[26]   # 27. Sales/Clerk/Hr
+    BENEFIT_PCT = inst[27]     # 28. Benefits %
+    EMERGENCY_WAGE = inst[28]  # 29. Emergency Rate (Approx from user string or default 400)
     
     # --- PHASE 1: RANKING PREP ---
     ranking_data = []
+    
     for p in store_list:
         tid = p['id']; inp = p['inputs']; prev = p['prev_stats']; fin = p['financials']
         
+        # Price Calc
         if inp[0] > 10: calc_price = BASE_RX_COST * (1 + inp[0]/100)
         else: calc_price = BASE_RX_COST + inp[0]
-        pres_price = max(calc_price, 5.0) + CONST_FEE
+        pres_price = max(calc_price, 5.0) + 2.90 # Fee constant
+        
+        # Ad Index (Hyperbolic)
+        rx_ad = inp[7] * (inp[8]/100)
+        otc_ad = inp[7] * (1 - inp[8]/100)
         
         def calc_ad(curr, past):
             factor = min((curr/AD_LIMIT) + (past*0.533), 2.0)
             return max(0, (0.84*factor) - (0.16*(factor**2)))
+            
+        new_rx_ad = calc_ad(rx_ad, prev.get('ad_index', 1.0))
+        new_otc_ad = calc_ad(otc_ad, prev.get('ad_index', 1.0))
         
-        new_rx_ad = calc_ad(inp[7] * (inp[8]/100), prev.get('ad_index', 1.0))
-        new_otc_ad = calc_ad(inp[7] * (1 - inp[8]/100), prev.get('ad_index', 1.0))
-        
+        # Inv Level
         def calc_inv(cogs, avg_inv): return cogs/avg_inv if avg_inv>0 else 10
         rx_inv = calc_inv(prev.get('cogs_rx',1), prev.get('avg_inv_rx',1))
         otc_inv = calc_inv(prev.get('cogs_otc',1), prev.get('avg_inv_otc',1))
         
         ranking_data.append({
-            'id': tid, 'loc_idx': max(0, p['location_code']-1),
+            'id': tid, 'loc_idx': p['location_code']-1,
             'Price_Past': prev['avg_price'], 'Price_Pres': pres_price,
             'Promo': new_rx_ad, 'Hours': inp[6],
             'Delivery': inp[3], 'Records': inp[4], 'Credit': inp[5],
@@ -162,27 +172,29 @@ def calculate_results():
     # --- PHASE 2: SCORING ---
     def calc_pts(series, asc): return (num_stores + 1) - series.rank(method='min', ascending=asc)
 
+    # Rx Scores
     rx_sc = pd.Series(0.0, index=df.index)
     rx_map = [('Price_Past',1), ('Price_Pres',1), ('Promo',0), ('Hours',0), ('Delivery',0), ('Records',0), ('Credit',0), ('Inventory',1), ('MktShare',0), ('Efficiency',0)]
-    rx_keys = list(st.session_state.rx_weights_df.columns)
+    rx_keys = list(RX_WEIGHTS_CONFIG.keys())
     
     for idx, (col, asc) in enumerate(rx_map):
         pts = calc_pts(df[col], bool(asc))
         key = rx_keys[idx]
-        wts = df['loc_idx'].apply(lambda x: st.session_state.rx_weights_df[key].iloc[x])
+        wts = df['loc_idx'].apply(lambda x: st.session_state.rx_weights_df[key].iloc[x if x>=0 else 0])
         rx_sc += pts * wts
         
     df['Rx_Share'] = rx_sc / rx_sc.sum()
+    df['Rx_Share_Pct'] = df['Rx_Share'] * 100
     
-    df['Rx_Share_Val'] = df['Rx_Share'] * 100
+    # OTC Scores
     otc_sc = pd.Series(0.0, index=df.index)
-    otc_map = [('Markup_Past',1), ('Markup_Pres',1), ('Ad_Index_OTC',0), ('Hours',0), ('Inv_OTC',1), ('Rx_Share_Val',0)]
-    otc_keys = list(st.session_state.otc_weights_df.columns)
+    otc_map = [('Markup_Past',1), ('Markup_Pres',1), ('Ad_Index_OTC',0), ('Hours',0), ('Inv_OTC',1), ('Rx_Share_Pct',0)]
+    otc_keys = list(OTC_WEIGHTS_CONFIG.keys())
     
     for idx, (col, asc) in enumerate(otc_map):
         pts = calc_pts(df[col], bool(asc))
         key = otc_keys[idx]
-        wts = df['loc_idx'].apply(lambda x: st.session_state.otc_weights_df[key].iloc[x])
+        wts = df['loc_idx'].apply(lambda x: st.session_state.otc_weights_df[key].iloc[x if x>=0 else 0])
         otc_sc += pts * wts
         
     df['OTC_Share'] = otc_sc / otc_sc.sum()
@@ -199,43 +211,50 @@ def calculate_results():
         share = rx_share_map[tid]
         if tid == hmo_win: share *= 1.15
         
+        # Sales
         rx_cnt = RX_MKT_VOL * num_stores * share
         if inp[0]>10: p_pr = BASE_RX_COST*(1+inp[0]/100)
         else: p_pr = BASE_RX_COST + inp[0]
-        p_pr = max(p_pr, 5.0) + CONST_FEE
+        p_pr = max(p_pr, 5.0) + 2.90
         
         rx_sale = rx_cnt * p_pr
         otc_sale = OTC_MKT_VAL * num_stores * otc_share_map[tid]
         tot_sale = rx_sale + otc_sale
         
+        # COGS
         cost_rx = rx_sale / (p_pr/BASE_RX_COST)
         cost_otc = otc_sale * 0.65
         gm = tot_sale - (cost_rx + cost_otc)
         
-        p_fte = inp[16]; c_fte = inp[18]
-        
+        # Wages & Staffing
+        hrs_op = inp[6]
+        # Pharm
+        p_fte = inp[16] # No wage check in simplified version to prevent full crash, or add logic back if desired
         avail_p = (p_fte*40*13) + (inp[22]/100*inp[22]*13)
         req_p = rx_cnt/10.0
         p_ot = max(0, req_p - avail_p)
-        w_p = (avail_p*inp[17]) + (p_ot*EMERGENCY_RATE*1.5)
+        w_p = (avail_p*inp[17]) + (p_ot*EMERGENCY_WAGE*1.5)
         
+        # Clerk
+        c_fte = inp[18]
         avail_c = c_fte*40*13
-        req_c = tot_sale/SALES_PER_CLK 
+        req_c = tot_sale/SALES_PER_CLK
         c_ot = max(0, req_c - avail_c)
         w_c = (avail_c*inp[19]) + (c_ot*inp[19]*1.5)
         
-        ben = (w_p + w_c) * (BENEFIT_PCT/100.0) 
-        
+        # Ben & Exp
+        ben = (w_p + w_c) * (BENEFIT_PCT/100.0) # Using instructor param directly
         rent = tot_sale * LOC_RENT_RATE.get(p['location_code'], 0.03)
         exp = w_p + w_c + ben + rent + inp[7] + inp[20] + inp[23] + 3000
         
         depr = fin['fixed_assets']*0.02
         bad = inp[29]
-        inte = (fin['long_term_debt']+fin['notes_payable']) * INTEREST_RATE
+        inte = (fin['long_term_debt']+fin['notes_payable']) * LOAN_INTEREST
         
         opex = exp + depr + inte + bad
         profit = gm - opex + (fin['investments']*0.015)
         
+        # Cash & Balances
         fin['investments'] += (inp[9]-inp[11])
         fin['inventory_rx'] = max(0, fin['inventory_rx'] + inp[14] - cost_rx)
         fin['inventory_otc'] = max(0, fin['inventory_otc'] + inp[15] - cost_otc)
@@ -253,13 +272,14 @@ def calculate_results():
             
         fin['retained_earnings'] += profit
         
+        # Update Stats
         p['prev_stats'].update({
             'avg_price': p_pr, 'mkt_share': share*100, 
             'ad_index': df[df['id']==tid]['Promo'].values[0],
-            'cogs_rx': cost_rx, 'avg_inv_rx': (fin['inventory_rx']+inp[14])/2,
-            'cogs_otc': cost_otc, 'avg_inv_otc': (fin['inventory_otc']+inp[15])/2
+            'cogs_rx': cost_rx, 'avg_inv_rx': (fin['inventory_rx']+inp[14])/2
         })
         
+        # Record
         def safe(n,d): return n/d if d!=0 else 0
         nw = fin['retained_earnings']
         ca = fin['cash']+fin['investments']+fin['inventory_rx']+fin['inventory_otc']
@@ -269,8 +289,8 @@ def calculate_results():
             "Period": st.session_state.global_period,
             "TOT SALES": tot_sale, "Rx SALES": rx_sale, "OTH SALES": otc_sale,
             "Avg Rx Pr": p_pr, "Rx Ing $": BASE_RX_COST, "Rx GM%": safe(rx_sale-cost_rx, rx_sale)*100,
-            "Tot #Rx's": rx_cnt, "Rx Mkt Sh": share*100, "Store Hrs": inp[6],
-            "RP OverT": p_ot, "RP Hr Pay": EMERGENCY_RATE if p_ot>0 else inp[17],
+            "Tot #Rx's": rx_cnt, "Rx Mkt Sh": share*100, "Store Hrs": hrs_op,
+            "RP OverT": p_ot, "RP Hr Pay": EMERGENCY_WAGE if p_ot>0 else inp[17],
             "Net Worth": nw, "Cash Flow": c_ops,
             "Current": safe(ca,cl), "ROI": safe(profit,nw)*100, "LOCATION": LOC_MAP[p['location_code']],
             "Income_Statement": {
@@ -290,7 +310,7 @@ def calculate_results():
 # 4. UI
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V33")
+    st.title("💊 Communi-Pharm V32")
     if st.button("🔄 HARD RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def render_instructor_ui():
@@ -302,11 +322,19 @@ def render_instructor_ui():
         if st.button("Next ➡️"): initialize_teams(n); st.session_state.game_state="SETUP_STEP_2"; st.rerun()
         
     elif st.session_state.game_state == "SETUP_STEP_2":
-        st.markdown('<div class="step-header">Step 2: Market Data (29 Variables)</div>', unsafe_allow_html=True)
-        st.info("Edit the Market Environment variables directly in the table below.")
+        st.markdown('<div class="step-header">Step 2: Market Data (Variables 1-31)</div>', unsafe_allow_html=True)
+        st.info("Paste your Instructor Data string here or edit below")
         
-        # Table Editor Only (No Paste String)
-        df_inst = pd.DataFrame({"Label": INST_LABELS_29, "Value": st.session_state.inst_data_list})
+        # Quick Paste
+        raw_str = st.text_area("Paste Data String", value=" ".join(map(str, st.session_state.inst_data_list)))
+        if st.button("Parse String"):
+            try:
+                st.session_state.inst_data_list = [float(x) for x in raw_str.split()]
+                st.toast("Data Parsed!", icon="✅"); st.rerun()
+            except: st.error("Invalid format")
+            
+        # Detailed Editor
+        df_inst = pd.DataFrame({"Label": INST_LABELS, "Value": st.session_state.inst_data_list})
         edited = st.data_editor(df_inst, height=600, hide_index=True)
         
         c1, c2 = st.columns([1,5])
