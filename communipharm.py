@@ -5,9 +5,9 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V25 (Final Merger)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V26 (Config Saved)", layout="wide")
 
-# CSS Styling (Setup Wizard + Report Style)
+# CSS Styling
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem; }
@@ -28,6 +28,7 @@ st.markdown("""
     .status-badge { padding: 5px 10px; border-radius: 15px; font-size: 0.8rem; font-weight: bold; color: white;}
     .badge-pending { background-color: #9e9e9e; }
     .badge-submitted { background-color: #4caf50; }
+    .hmo-badge { background-color: #d1c4e9; color: #512da8; padding: 5px 10px; border-radius: 15px; font-weight: bold; font-size: 0.8em; }
     
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
 </style>
@@ -83,6 +84,7 @@ if 'game_state' not in st.session_state:
     st.session_state.global_period = 1
     st.session_state.players = {}
 
+# Initialize Weights in Session State (These will be the MASTER copy)
 if 'rx_weights_df' not in st.session_state:
     st.session_state.rx_weights_df = pd.DataFrame(RX_DEFAULT)
 if 'otc_weights_df' not in st.session_state:
@@ -113,11 +115,17 @@ def initialize_teams(num_teams):
 # 3. LOGIC ENGINE
 # ==========================================
 def calculate_results(store_list, rx_w_df, otc_w_df):
+    # This function uses the PASSED dataframes (rx_w_df, otc_w_df) which come from session_state
+    
+    # 1. HMO Bidding
+    hmo_bids = {p['id']: p['p']['inputs'][35] for p in store_list if p['p']['inputs'][35] > 0}
+    hmo_winner_id = min(hmo_bids, key=hmo_bids.get) if hmo_bids else None
+
+    # 2. Ranking
     data = []
     loc_code = store_list[0]['p']['location_code']
     loc_name = LOC_MAP[loc_code]
 
-    # --- 1. Ranking Prep ---
     for p in store_list:
         tid = p['id']; inp = p['p']['inputs']; prev = p['p']['prev_stats']; fin = p['p']['financials']
         curr_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] + CONST_FEE
@@ -130,10 +138,11 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
         })
     df_comp = pd.DataFrame(data)
 
-    # --- 2. Scoring ---
+    # Weights (From Session State)
     rx_weights = rx_w_df.set_index("Factor")[loc_name].values
     otc_weights = otc_w_df.set_index("Factor")[loc_name].values
 
+    # Scoring
     df_rx_ranks = pd.DataFrame({'id': df_comp['id']})
     def get_rank(series, ascending): return series.rank(method='min', ascending=ascending)
     df_rx_ranks['r0'] = get_rank(df_comp['price_past'], False); df_rx_ranks['r1'] = get_rank(df_comp['price_pres'], False)
@@ -141,6 +150,7 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
     for i, col in enumerate(cols): df_rx_ranks[f'r{i+2}'] = get_rank(df_comp[col], True)
     
     rx_scores = {row['id']: sum(row[f'r{i}'] * rx_weights[i] for i in range(10)) for index, row in df_rx_ranks.iterrows()}
+    if hmo_winner_id in rx_scores: rx_scores[hmo_winner_id] *= 1.15
     total_rx = sum(rx_scores.values())
     rx_shares = {k: (v/total_rx if total_rx else 0) for k,v in rx_scores.items()}
 
@@ -155,7 +165,7 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
     total_otc = sum(otc_scores.values())
     otc_shares = {k: (v/total_otc if total_otc else 0) for k,v in otc_scores.items()}
 
-    # --- 3. Financials (Detailed) ---
+    # 3. Financials
     base_rx_market = len(store_list) * 6000
     base_otc_market_usd = base_rx_market * 8.0
     
@@ -174,7 +184,6 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
         tot_cogs = cost_rx + cost_otc
         gross_margin = tot_sales - tot_cogs
         
-        # Expenses Breakdown
         wages_base = ((inp[17]*inp[18]) + (inp[19]*inp[20])) * inp[6] * WEEKS_PER_PERIOD
         if inp[6]>40: wages_base *= 1.1
         ben_cost = 0
@@ -182,12 +191,8 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
         if inp[33]==1: ben_cost += wages_base * BENEFIT_RATE_HEALTH
         
         rent_exp = tot_sales * LOC_RENT_RATE.get(loc_code, 0.0)
-        promo_exp = inp[7]
-        mgr_salary = inp[21]
-        
-        # Simplified breakdown for report
+        promo_exp = inp[7]; mgr_salary = inp[21]; mortgage = inp[24]
         util_exp = 800; phone_exp = 300; repair_exp = 400; ins_exp = 500; tax_exp = 400; supply_exp = 600
-        mortgage = inp[24]
         
         depr = fin['fixed_assets']*0.02
         bad_debt = inp[29]
@@ -198,7 +203,7 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
         invest_income = fin['investments']*INVESTMENT_RETURN
         net_profit = gross_margin - total_expenses + invest_income
         
-        # Cash Flow & Balance Sheet Update
+        # Cash
         fin['investments'] += (inp[9]-inp[11])
         max_rx_ret = fin['inventory_rx']*0.25; max_otc_ret=fin['inventory_otc']*0.25
         act_rx_ret = min(inp[26], max_rx_ret); act_otc_ret = min(inp[27], max_otc_ret)
@@ -207,15 +212,8 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
         fin['inventory_otc'] = max(0, fin['inventory_otc']+inp[15]-act_otc_ret-cost_otc)
         
         cash_in = (tot_sales*0.9) + act_rx_ret + act_otc_ret + inp[11]
-        
-        # Correct Cash Out Logic
-        # Expenses paid in cash = Total Exp - NonCash (Depr, BadDebt) - Interest (Handled separately? No, usually cash)
-        # However, Purchase go to AP, AP Payment reduces cash
-        cash_exp_paid = (total_expenses - depr - bad_debt) 
-        cash_out = cash_exp_paid - (inp[14]+inp[15]) # Wait, purchases are not in expenses. 
-        # Let's use simple logic: Wages, Rent, Fixed are paid. Purchases are not. 
         cash_out_ops = wages_base + ben_cost + rent_exp + promo_exp + mgr_salary + mortgage + 3000 + int_exp
-        cash_out = cash_out_ops + inp[28] + inp[9] + inp[30] # AP Payment + New Invest + Debt Pay
+        cash_out = cash_out_ops + inp[28] + inp[9] + inp[30]
         
         fin['cash'] += (cash_in - cash_out)
         fin['acct_payable'] += (inp[14]+inp[15]-inp[28])
@@ -232,14 +230,13 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
 
         fin['retained_earnings'] += net_profit
         
-        # --- PREPARE DATA ---
+        # Data Packaging
         nw = fin['retained_earnings']
         curr_assets = fin['cash'] + fin['investments'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['acct_receivable']
         curr_liab = fin['acct_payable'] + fin['notes_payable']
         
         p['history'].append({
             "Period": st.session_state.global_period,
-            # For Instructor Table
             "TOT SALES": tot_sales, "Rx SALES": rx_sales, "OTH SALES": otc_sales,
             "Avg Rx Pr": avg_rx_price, "Rx Ing $": BASE_COST_RX, 
             "Rx Mkt Sh": my_rx_share*100, "OTC Mkt Sh": my_otc_share*100,
@@ -248,8 +245,8 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
             "Wage/Hr": (wages_base/(inp[6]*13))/ (inp[16]+inp[18]) if (inp[16]+inp[18]) else 0,
             "Pt. Rec": inp[4], "Del Ser": inp[3], "Store Credit": inp[5], "Copay Dsct": inp[2],
             "Ins Life": inp[32], "Ins Hlt": inp[33],
+            "HMO Winner": (tid == hmo_winner_id),
             
-            # For Student Reports
             "Income_Statement": {
                 "Sales": {"Rx": rx_sales, "Other": otc_sales, "Total": tot_sales},
                 "COGS": {"Rx": cost_rx, "Other": cost_otc, "Total": tot_cogs},
@@ -288,7 +285,10 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
         p['status'] = 'Pending'
 
 def run_simulation_step():
-    rx_w = st.session_state.rx_weights_df; otc_w = st.session_state.otc_weights_df
+    # USES THE SAVED WEIGHTS FROM SESSION STATE
+    rx_w = st.session_state.rx_weights_df
+    otc_w = st.session_state.otc_weights_df
+    
     stores_by_loc = {1: [], 2: [], 3: []}
     for tid, p in st.session_state.players.items():
         if p['location_code'] != 0: stores_by_loc[p['location_code']].append({'id': tid, 'p': p})
@@ -300,7 +300,7 @@ def run_simulation_step():
 # 4. SIDEBAR (RESET)
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V25")
+    st.title("💊 Communi-Pharm V26")
     if st.button("🔄 HARD RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 # ==========================================
@@ -321,16 +321,26 @@ def render_instructor_ui():
     # --- PHASE 2: SETUP STEP 2 (WEIGHTS) ---
     elif st.session_state.game_state == "SETUP_STEP_2":
         st.markdown('<div class="step-header"><span class="step-title">Step 2: Configuration</span></div>', unsafe_allow_html=True)
+        st.info("ปรับแต่งค่าน้ำหนักที่นี่ เมื่อกด Save แล้ว ค่านี้จะถูกใช้ตลอดเกม")
+        
         tab_rx, tab_otc = st.tabs(["💊 Rx Weights", "🛍️ OTC Weights"])
-        with tab_rx: edited_rx = st.data_editor(st.session_state.rx_weights_df, use_container_width=True, num_rows="fixed")
-        with tab_otc: edited_otc = st.data_editor(st.session_state.otc_weights_df, use_container_width=True, num_rows="fixed")
+        with tab_rx: 
+            # Use 'edited_rx' as temporary holder
+            edited_rx = st.data_editor(st.session_state.rx_weights_df, use_container_width=True, num_rows="fixed")
+        with tab_otc: 
+            edited_otc = st.data_editor(st.session_state.otc_weights_df, use_container_width=True, num_rows="fixed")
         
         c1, c2 = st.columns([1, 5])
         if c1.button("⬅️ Back"): st.session_state.game_state = "SETUP_STEP_1"; st.rerun()
-        if c2.button("💾 Save & Start Game", type="primary"):
+        
+        # --- CRITICAL: SAVING CONFIGURATION ---
+        if c2.button("💾 Save Config & Start Game", type="primary"):
+            # Update Session State with Edited Values
             st.session_state.rx_weights_df = edited_rx
             st.session_state.otc_weights_df = edited_otc
+            
             st.session_state.game_state = "ACTIVE"
+            st.toast("Configuration Saved Successfully!", icon="✅")
             st.rerun()
 
     # --- PHASE 3: ACTIVE GAME (PAGE 2 REPORT) ---
@@ -349,7 +359,6 @@ def render_instructor_ui():
             
             df_sum = pd.DataFrame(summary_data, index=metrics)
             
-            # Format
             def fmt(val, metric):
                 if "SALES" in metric or "Profit" in metric: return f"${val:,.0f}"
                 if "Mkt Sh" in metric or "ROI" in metric: return f"{val:.2f}%"
@@ -411,6 +420,9 @@ def render_student_ui():
             
             st.markdown(f"<div class='report-title'>FINANCIAL REPORT: {p['shop_name']} (Period {last['Period']})</div>", unsafe_allow_html=True)
             
+            # HMO Badge
+            if last.get('HMO Winner'): st.markdown('<span class="hmo-badge">🏆 HMO Contract Winner</span>', unsafe_allow_html=True)
+
             # 1. Income Statement (Page 3 Style)
             st.markdown("<div class='report-section'><div class='report-header'>INCOME STATEMENT</div>", unsafe_allow_html=True)
             col1, col2 = st.columns(2)
