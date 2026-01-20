@@ -5,41 +5,28 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V27 (Detailed Instructor Report)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V28 (Full Config)", layout="wide")
 
-# CSS Styling
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem; }
     .step-header { background-color: #e3f2fd; padding: 15px; border-radius: 10px; border-left: 5px solid #2196f3; margin-bottom: 20px; }
     .step-title { color: #1565c0; font-size: 1.2rem; font-weight: bold; }
-    
     .report-title { font-size: 1.5rem; font-weight: bold; text-align: center; color: #2c3e50; margin-bottom: 20px; }
     .report-section { background-color: #ffffff; padding: 15px; border: 1px solid #ddd; margin-bottom: 15px; }
     .report-header { font-weight: bold; border-bottom: 2px solid #2c3e50; margin-bottom: 10px; padding-bottom: 5px; }
     .fin-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px dotted #eee; }
-    .fin-label { font-weight: 500; color: #555; }
     .fin-value { font-family: 'Courier New', monospace; font-weight: bold; }
     .double-underline { border-bottom: 3px double #000; }
-    
     .status-badge { padding: 5px 10px; border-radius: 15px; font-size: 0.8rem; font-weight: bold; color: white;}
     .badge-pending { background-color: #9e9e9e; }
     .badge-submitted { background-color: #4caf50; }
     .hmo-badge { background-color: #d1c4e9; color: #512da8; padding: 5px 10px; border-radius: 15px; font-weight: bold; font-size: 0.8em; }
-    
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
 ADMIN_PASSWORD = "admin"
-
-# --- Constants ---
-WEEKS_PER_PERIOD = 13
-BASE_COST_RX = 11.23
-CONST_FEE = 2.90
-BENEFIT_RATE_LIFE = 0.05
-BENEFIT_RATE_HEALTH = 0.15
-INVESTMENT_RETURN = 0.015
 
 INPUT_LABELS = [
     "1. Rx Markup (%)", "2. Rx Prof. Fee ($)", "3. Copay Discount ($)",
@@ -73,13 +60,46 @@ OTC_DEFAULT = {
 }
 
 # ==========================================
-# 2. STATE MANAGEMENT
+# 2. STATE MANAGEMENT & DEFAULTS
 # ==========================================
+# Initialize Instructor Data (Default Values from Manual/PDF)
+DEFAULT_ENV = {
+    "Number of Next Period": 2,
+    "Average Ingredient Cost ($)": 11.23,
+    "Average Copay Allowed ($)": 5.00,
+    "Average Third-Party Fee ($)": 4.50,
+    "Percent Market Rx’s 3rd-Party (%)": 25.0,
+    "Maximum Promotion Expenditure ($)": 1500.0,
+    "% Sales A/R Store Type 1 (%)": 10.0,
+    "% A/R Sales Store Type 2 (%)": 20.0,
+    "% A/R Sales Store Type 3 (%)": 5.0,
+    "Interest Rate for Period (%)": 2.5,
+    "Average Number Rx Per Store (#)": 6000,
+    "Average Other Sales Per Store ($)": 48000,
+    "Gross Margin Slippage Rate (%)": 0.10,
+    "Number Periods per Year (#)": 6,
+    "Third-Party Lag in Payment (%)": 14.40,
+    "A/R Lag in Payment (%)": 11.20,
+    "Mutual Fund Transaction Price ($)": 10.0,
+    "Closing Date Month": 3, "Day": 31, "Year": 1990,
+    "Current Inflation Rate (%)": 1.0,
+    "Stockout Rx Inventory Index": 50.0,
+    "Stockout Other Inventory Index": 50.0,
+    "Pass Book Savings Rate (%)": 1.5,
+    "Mutual Fund Next Period ($)": 10.5,
+    "Interest Rate on CD’s (%)": 2.0,
+    "Average Dollar Sales/Clerk ($)": 25.30,
+    "Maximum Price for Rx’s ($)": 100.0,
+    "SS & WC as % of Salary & Wages (%)": 8.5
+}
+
 if 'game_state' not in st.session_state:
     st.session_state.game_state = "SETUP_STEP_1"
     st.session_state.global_period = 1
     st.session_state.players = {}
 
+if 'instructor_env' not in st.session_state:
+    st.session_state.instructor_env = DEFAULT_ENV.copy()
 if 'rx_weights_df' not in st.session_state:
     st.session_state.rx_weights_df = pd.DataFrame(RX_DEFAULT)
 if 'otc_weights_df' not in st.session_state:
@@ -107,9 +127,14 @@ def initialize_teams(num_teams):
         }
 
 # ==========================================
-# 3. LOGIC ENGINE
+# 3. LOGIC ENGINE (Updated with Env Variables)
 # ==========================================
-def calculate_results(store_list, rx_w_df, otc_w_df):
+def calculate_results(store_list, rx_w_df, otc_w_df, env):
+    # Variables from Environment
+    base_cost_rx = env["Average Ingredient Cost ($)"]
+    const_fee = env["Average Third-Party Fee ($)"] # Proxy for base fee? No, manual says this is 3rd party. Using as constant fee base for now.
+    # Actually, Manual implies Ingredient Cost is base.
+    
     # 1. HMO Bidding
     hmo_bids = {p['id']: p['p']['inputs'][35] for p in store_list if p['p']['inputs'][35] > 0}
     hmo_winner_id = min(hmo_bids, key=hmo_bids.get) if hmo_bids else None
@@ -121,7 +146,7 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
 
     for p in store_list:
         tid = p['id']; inp = p['p']['inputs']; prev = p['p']['prev_stats']; fin = p['p']['financials']
-        curr_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] + CONST_FEE
+        curr_price = (base_cost_rx * (1 + inp[0]/100)) + inp[1] + 2.90 # 2.90 is fixed constant fee in model
         inv_level = (fin['inventory_rx'] + fin['inventory_otc']) / 1000
         data.append({
             'id': tid, 'price_past': prev['avg_price'], 'price_pres': curr_price,
@@ -159,15 +184,24 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
     otc_shares = {k: (v/total_otc if total_otc else 0) for k,v in otc_scores.items()}
 
     # 3. Financials
-    base_rx_market = len(store_list) * 6000
-    base_otc_market_usd = base_rx_market * 8.0
+    # Market Size from ENV
+    avg_rx_vol = env["Average Number Rx Per Store (#)"]
+    avg_otc_vol = env["Average Other Sales Per Store ($)"]
+    base_rx_market = len(store_list) * avg_rx_vol
+    base_otc_market_usd = len(store_list) * avg_otc_vol
     
+    weeks_per_period = 52 / env["Number Periods per Year (#)"] # e.g. 52/6 = 8.66 weeks? Or hardcoded 13? Let's use 13 for quarterly
+    # Manual says "Bimonthly-- 6 periods" -> ~8.6 weeks. But code used 13. Let's adjust to Env.
+    # Actually most sims use quarterly logic (13 weeks) but label it bimonthly. I'll stick to 13 to be safe or derived?
+    # Let's derive: weeks = 52 / periods
+    weeks_actual = 52 / env["Number Periods per Year (#)"]
+
     for s_data in store_list:
         tid = s_data['id']; p = s_data['p']; inp = p['inputs']; fin = p['financials']
         my_rx_share = rx_shares[tid]; my_otc_share = otc_shares[tid]
         
         rx_count = base_rx_market * my_rx_share
-        avg_rx_price = (BASE_COST_RX*(1+inp[0]/100))+inp[1]+CONST_FEE
+        avg_rx_price = (base_cost_rx*(1+inp[0]/100))+inp[1]+2.90
         rx_sales = rx_count * avg_rx_price
         loc_mult = 1.5 if loc_code == 3 else 1.0
         otc_sales = base_otc_market_usd * loc_mult * my_otc_share
@@ -177,26 +211,30 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
         tot_cogs = cost_rx + cost_otc
         gross_margin = tot_sales - tot_cogs
         
-        # Calculate Overtime & Wages
-        hrs_open = inp[6]
-        overtime_hrs = max(0, hrs_open - 40)
-        wages_base = ((inp[17]*inp[18]) + (inp[19]*inp[20])) * hrs_open * WEEKS_PER_PERIOD
-        if hrs_open > 40: wages_base *= 1.1 # OT Cost
+        # Slippage
+        slippage = gross_margin * (env["Gross Margin Slippage Rate (%)"] / 100.0)
+        gross_margin -= slippage
         
-        ben_cost = 0
-        if inp[32]==1: ben_cost += wages_base * BENEFIT_RATE_LIFE
-        if inp[33]==1: ben_cost += wages_base * BENEFIT_RATE_HEALTH
+        wages_base = ((inp[17]*inp[18]) + (inp[19]*inp[20])) * inp[6] * weeks_actual
+        if inp[6]>40: wages_base *= 1.1
+        
+        # Benefits (Env Base + Student Selection)
+        base_ben = env["SS & WC as % of Salary & Wages (%)"] / 100.0
+        if inp[32]==1: base_ben += 0.05
+        if inp[33]==1: base_ben += 0.15
+        ben_cost = wages_base * base_ben
         
         rent_exp = tot_sales * LOC_RENT_RATE.get(loc_code, 0.0)
         promo_exp = inp[7]; mgr_salary = inp[21]; mortgage = inp[24]
         
         depr = fin['fixed_assets']*0.02
         bad_debt = inp[29]
-        int_exp = (fin['long_term_debt']+fin['notes_payable'])*0.025
+        int_exp = (fin['long_term_debt']+fin['notes_payable']) * (env["Interest Rate for Period (%)"]/100.0)
         
         total_expenses = wages_base + ben_cost + rent_exp + promo_exp + mgr_salary + mortgage + 3000 + depr + int_exp + bad_debt
         
-        invest_income = fin['investments']*INVESTMENT_RETURN
+        # Investment Income
+        invest_income = fin['investments'] * (env["Interest Rate on CD’s (%)"]/100.0) # Using CD rate for simplicity
         net_profit = gross_margin - total_expenses + invest_income
         
         # Cash Flow
@@ -211,9 +249,7 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
         cash_out_ops = wages_base + ben_cost + rent_exp + promo_exp + mgr_salary + mortgage + 3000 + int_exp
         cash_out = cash_out_ops + inp[28] + inp[9] + inp[30]
         
-        net_cash_flow = cash_in - cash_out
-        fin['cash'] += net_cash_flow
-        
+        fin['cash'] += (cash_in - cash_out)
         fin['acct_payable'] += (inp[14]+inp[15]-inp[28])
         fin['acct_receivable'] += (tot_sales*0.1 - bad_debt)
         fin['long_term_debt'] -= inp[30]
@@ -228,32 +264,25 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
 
         fin['retained_earnings'] += net_profit
         
-        # --- DATA FOR INSTRUCTOR TABLE ---
+        # Packaging
         nw = fin['retained_earnings']
         curr_assets = fin['cash'] + fin['investments'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['acct_receivable']
         curr_liab = fin['acct_payable'] + fin['notes_payable']
-        
-        # 3-Party Logic (Simplified Estimation for Display)
-        has_3pty = inp[34] == 1
-        rx_3pty_pct = 0.25 if has_3pty else 0.0
-        
+        overtime_hrs = max(0, inp[6] - 40)
+
         p['history'].append({
             "Period": st.session_state.global_period,
-            # Requested Fields for Instructor
             "TOT SALES": tot_sales, "Rx SALES": rx_sales, "OTH SALES": otc_sales,
-            "Avg Rx Pr": avg_rx_price, "Rx Ing $": BASE_COST_RX, 
+            "Avg Rx Pr": avg_rx_price, "Rx Ing $": base_cost_rx, 
             "Rx GM%": ((rx_sales-cost_rx)/rx_sales)*100 if rx_sales else 0,
-            "3-Pty GM%": 0.0, # Placeholder
-            "Tot #Rx's": rx_count, "3-Pty #Rx": rx_count * rx_3pty_pct,
+            "3-Pty GM%": 0.0, "Tot #Rx's": rx_count, "3-Pty #Rx": rx_count * (env["Percent Market Rx’s 3rd-Party (%)"]/100.0),
             "Copay Dis": inp[2], "OTC M'kup": inp[13],
-            "Rx Mkt Sh": my_rx_share*100, "Store Hrs": hrs_open,
+            "Rx Mkt Sh": my_rx_share*100, "Store Hrs": inp[6],
             "A/P Paid": inp[28], "M'age Pay": mortgage, "E. Loan": e_loan,
             "Mgr Hrs": inp[22], "RP OverT": overtime_hrs, "RP Hr Pay": inp[17],
             "Clk OverT": overtime_hrs, "Clk Wage": inp[19], "Adv Exp": promo_exp,
-            "Net Worth": nw, "Cash Flow": net_cash_flow,
+            "Net Worth": nw, "Cash Flow": cash_in - cash_out,
             "E Rx Pur": inp[14], "E OTC Pur": inp[15],
-            
-            # Ratios
             "Current": curr_assets/curr_liab if curr_liab else 0,
             "Acid Test": (fin['cash']+fin['acct_receivable']+fin['investments'])/curr_liab if curr_liab else 0,
             "Turnover": tot_cogs / ((fin['inventory_rx']+fin['inventory_otc'])/2) if (fin['inventory_rx']+fin['inventory_otc']) else 0,
@@ -263,51 +292,38 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
             "Profit": (net_profit/tot_sales)*100,
             "Debt/NW": (fin['long_term_debt']+curr_liab)/nw if nw else 0,
             "LOCATION": LOC_MAP[loc_code],
-            
-            # Additional for Student Report
             "HMO Winner": (tid == hmo_winner_id),
             "Income_Statement": {
                 "Sales": {"Rx": rx_sales, "Other": otc_sales, "Total": tot_sales},
                 "COGS": {"Rx": cost_rx, "Other": cost_otc, "Total": tot_cogs},
                 "Gross Margin": gross_margin,
                 "Expenses": {
-                    "Wages": wages_base, "Mgr Salary": mgr_salary, "Rent": rent_exp, 
-                    "Utilities": 800, "Phone": 300, "Repairs": 400, "Insurance": 500,
-                    "Taxes": 400, "Supplies": 600, "Advertising": promo_exp, "Depreciation": depr,
-                    "Interest": int_exp, "Bad Debts": bad_debt, "Mortgage": mortgage, "Benefits": ben_cost,
-                    "Penalty": e_loan*0.20 if e_loan else 0
+                    "Wages": wages_base, "Mgr Salary": mgr_salary, "Rent": rent_exp, "Util": 800, "Phone": 300, "Repairs": 400, "Insur": 500, "Tax": 400, "Supply": 600, "Adv": promo_exp, "Depr": depr, "Int": int_exp, "Bad": bad_debt, "Mort": mortgage, "Ben": ben_cost, "Pen": e_loan*0.2
                 },
                 "Total Expenses": total_expenses, "Inv Income": invest_income, "Net Profit": net_profit
             },
             "Balance_Sheet": {
-                "Assets": {
-                    "Cash": fin['cash'], "Accts Receivable": fin['acct_receivable'], 
-                    "Inventory (Rx)": fin['inventory_rx'], "Inventory (Other)": fin['inventory_otc'],
-                    "Investments": fin['investments'], "Fixed Assets": fin['fixed_assets']
-                },
-                "Liabilities": {
-                    "Accts Payable": fin['acct_payable'], "Notes Payable": fin['notes_payable'],
-                    "Long Term Debt": fin['long_term_debt']
-                },
+                "Assets": {"Cash": fin['cash'], "AR": fin['acct_receivable'], "InvRx": fin['inventory_rx'], "InvOth": fin['inventory_otc'], "Invest": fin['investments'], "Fix": fin['fixed_assets']},
+                "Liabilities": {"AP": fin['acct_payable'], "Notes": fin['notes_payable'], "LTD": fin['long_term_debt']},
                 "Equity": fin['retained_earnings']
             }
         })
         p['status'] = 'Pending'
 
 def run_simulation_step():
-    rx_w = st.session_state.rx_weights_df; otc_w = st.session_state.otc_weights_df
+    rx_w = st.session_state.rx_weights_df; otc_w = st.session_state.otc_weights_df; env = st.session_state.instructor_env
     stores_by_loc = {1: [], 2: [], 3: []}
     for tid, p in st.session_state.players.items():
         if p['location_code'] != 0: stores_by_loc[p['location_code']].append({'id': tid, 'p': p})
     for loc in stores_by_loc:
-        if stores_by_loc[loc]: calculate_results(stores_by_loc[loc], rx_w, otc_w)
+        if stores_by_loc[loc]: calculate_results(stores_by_loc[loc], rx_w, otc_w, env)
     st.session_state.global_period += 1
 
 # ==========================================
 # 4. SIDEBAR & UI ROUTER
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V27")
+    st.title("💊 Communi-Pharm V28")
     if st.button("🔄 HARD RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 # ==========================================
@@ -323,21 +339,32 @@ def render_instructor_ui():
             initialize_teams(num_teams); st.session_state.game_state = "SETUP_STEP_2"; st.rerun()
 
     elif st.session_state.game_state == "SETUP_STEP_2":
-        st.markdown('<div class="step-header">Step 2: Configuration</div>', unsafe_allow_html=True)
+        st.markdown('<div class="step-header">Step 2: Environment Configuration</div>', unsafe_allow_html=True)
+        
+        # Environment Editor
+        env_df = pd.DataFrame(list(st.session_state.instructor_env.items()), columns=["Variable", "Value"])
+        edited_env = st.data_editor(env_df, height=500, use_container_width=True)
+        
+        st.markdown("---")
+        st.markdown('<div class="step-header">Step 3: Weights Configuration</div>', unsafe_allow_html=True)
         tab1, tab2 = st.tabs(["Rx Weights", "OTC Weights"])
-        with tab1: e1 = st.data_editor(st.session_state.rx_weights_df)
-        with tab2: e2 = st.data_editor(st.session_state.otc_weights_df)
-        c1, c2 = st.columns([1, 5])
-        if c1.button("⬅️ Back"): st.session_state.game_state="SETUP_STEP_1"; st.rerun()
-        if c2.button("💾 Save & Start", type="primary"):
-            st.session_state.rx_weights_df=e1; st.session_state.otc_weights_df=e2; st.session_state.game_state="ACTIVE"; st.rerun()
+        with tab1: e_rx = st.data_editor(st.session_state.rx_weights_df)
+        with tab2: e_otc = st.data_editor(st.session_state.otc_weights_df)
+        
+        if st.button("💾 Save & Start Game", type="primary"):
+            # Convert Env DF back to dict
+            new_env = dict(zip(edited_env["Variable"], edited_env["Value"]))
+            st.session_state.instructor_env = new_env
+            st.session_state.rx_weights_df = e_rx
+            st.session_state.otc_weights_df = e_otc
+            st.session_state.game_state = "ACTIVE"
+            st.toast("Configuration Saved!", icon="✅"); st.rerun()
 
     elif st.session_state.game_state == "ACTIVE":
         st.write(f"### City Summary - Period {st.session_state.global_period-1}")
         
         has_results = any(p['history'] for p in st.session_state.players.values())
         if has_results:
-            # Requested Metrics List
             metrics_order = [
                 "TOT SALES", "Rx SALES", "OTH SALES", "Avg Rx Pr", "Rx Ing $", "Rx GM%", "3-Pty GM%",
                 "Tot #Rx's", "3-Pty #Rx", "Copay Dis", "OTC M'kup", "Rx Mkt Sh", "Store Hrs",
@@ -345,31 +372,23 @@ def render_instructor_ui():
                 "Clk OverT", "Clk Wage", "Adv Exp", "Net Worth", "Cash Flow", "E Rx Pur", "E OTC Pur",
                 "Current", "Acid Test", "Turnover", "ROI", "ROA", "G Margin", "Profit", "Debt/NW", "LOCATION"
             ]
-            
             summary_data = {}
             for tid, p in st.session_state.players.items():
                 if p['history']:
                     last = p['history'][-1]
                     summary_data[p['shop_name']] = [last.get(m, 0) for m in metrics_order]
-            
             df_sum = pd.DataFrame(summary_data, index=metrics_order)
             
+            # Format
             def fmt(val, idx):
-                if idx == "LOCATION": return str(val)
-                if "GM%" in idx or "Mkt Sh" in idx or "ROI" in idx or "Profit" in idx or "G Margin" in idx: return f"{val:.2f}%"
-                if "SALES" in idx or "Cash" in idx or "Pay" in idx or "Loan" in idx or "Worth" in idx or "Pur" in idx or "$" in idx or "Exp" in idx: return f"${val:,.0f}"
-                return f"{val:.2f}" if isinstance(val, float) else f"{val}"
-
-            for col in df_sum.columns:
-                df_sum[col] = [fmt(v, i) for i, v in zip(df_sum.index, df_sum[col])]
+                if idx=="LOCATION": return str(val)
+                if any(x in idx for x in ["GM%","Mkt","ROI","Profit","Margin"]): return f"{val:.2f}%"
+                if any(x in idx for x in ["SALES","Cash","Pay","Loan","Worth","Pur","$","Exp"]): return f"${val:,.0f}"
+                return f"{val:.2f}" if isinstance(val,float) else f"{val}"
             
-            # Separate sections for readability
-            st.subheader("General Statistics")
-            st.table(df_sum.iloc[:26])
-            st.subheader("Ratios")
-            st.table(df_sum.iloc[26:])
+            for col in df_sum.columns: df_sum[col] = [fmt(v, i) for i, v in zip(df_sum.index, df_sum[col])]
+            st.table(df_sum)
         
-        # Control
         ready = sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')
         st.metric("Ready", f"{ready}/{len(st.session_state.players)}")
         if st.button("🚀 Run Period"): run_simulation_step(); st.rerun()
@@ -386,7 +405,7 @@ def render_student_ui():
     if p['period'] == 1 and p['status'] == 'Pending':
         c1, c2 = st.columns(2)
         n = c1.text_input("Store Name", p['shop_name']); l = c2.selectbox("Location", [0,1,2,3], format_func=lambda x: LOC_MAP[x])
-        if st.button("Start P1"): 
+        if st.button("Start"): 
             if l!=0: p['shop_name']=n; p['location_code']=l; p['status']='Thinking'; st.rerun()
         return
 
@@ -397,29 +416,28 @@ def render_student_ui():
             df_inp = pd.DataFrame({"Label": INPUT_LABELS, "Value": p['inputs']})
             edited = st.data_editor(df_inp, hide_index=True, height=600)
             if st.button("Submit"): p['inputs']=edited['Value'].tolist(); p['status']='Submitted'; st.rerun()
-
+    
     with tab2:
         if p['history']:
             last = p['history'][-1]
             inc = last['Income_Statement']; bal = last['Balance_Sheet']
             st.markdown(f"<div class='report-title'>Report Period {last['Period']}</div>", unsafe_allow_html=True)
+            if last['HMO Winner']: st.success("🏆 HMO Winner!")
             
-            col1, col2 = st.columns(2)
-            with col1:
+            c1, c2 = st.columns(2)
+            with c1:
                 st.markdown("<div class='report-header'>INCOME STATEMENT</div>", unsafe_allow_html=True)
                 st.write(f"Total Sales: ${inc['Sales']['Total']:,.0f}")
                 st.write(f"Gross Margin: ${inc['Gross Margin']:,.0f}")
                 st.write(f"Total Expenses: ${inc['Total Expenses']:,.0f}")
                 st.markdown(f"**Net Profit: ${inc['Net Profit']:,.0f}**")
-            with col2:
+            with c2:
                 st.markdown("<div class='report-header'>BALANCE SHEET</div>", unsafe_allow_html=True)
                 st.write(f"Cash: ${bal['Assets']['Cash']:,.0f}")
                 st.write(f"Total Assets: ${sum(bal['Assets'].values()):,.0f}")
-                st.write(f"Total Liab: ${sum(bal['Liabilities'].values()):,.0f}")
+                st.write(f"Liabilities: ${sum(bal['Liabilities'].values()):,.0f}")
                 st.write(f"Equity: ${bal['Equity']:,.0f}")
-                
-            if last['HMO Winner']: st.success("🏆 HMO Winner!")
-        else: st.info("No results.")
+        else: st.info("No report.")
 
 # ==========================================
 # 7. ROUTER
