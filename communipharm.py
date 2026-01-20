@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V10.20 (Manual Logic)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V21 + HMO", layout="wide")
 
 # CSS Styling
 st.markdown("""
@@ -15,6 +15,7 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #f0f2f6; border-radius: 5px; }
     .stTabs [aria-selected="true"] { background-color: #e6f3ff; border: 1px solid #2980b9; }
+    .hmo-badge { background-color: #d1c4e9; color: #512da8; padding: 5px 10px; border-radius: 15px; font-weight: bold; font-size: 0.8em; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -134,7 +135,7 @@ if 'players' not in st.session_state:
     start_new_game(5)
 
 # ==========================================
-# 3. LOGIC ENGINE (UPDATED WITH MANUAL/README LOGIC)
+# 3. LOGIC ENGINE (V21 + HMO Feature)
 # ==========================================
 def calculate_results(store_list, rx_w_df, otc_w_df):
     data = []
@@ -142,6 +143,18 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
     loc_name = LOC_MAP[loc_code]
     
     # 3.1 Ranking Data Prep
+    # -------------------------------------------------------------------------
+    # [NEW] HMO Bidding Logic
+    # หาคนที่ Bid ต่ำสุด (ที่มากกว่า 0)
+    hmo_bids = {}
+    for p in store_list:
+        bid = p['p']['inputs'][35] # Input 36 (index 35)
+        if bid > 0:
+            hmo_bids[p['id']] = bid
+    
+    hmo_winner_id = min(hmo_bids, key=hmo_bids.get) if hmo_bids else None
+    # -------------------------------------------------------------------------
+
     for p in store_list:
         tid = p['id']; inp = p['p']['inputs']; prev = p['p']['prev_stats']; fin = p['p']['financials']
         curr_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] + CONST_FEE
@@ -167,6 +180,11 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
     for i, col in enumerate(cols_map): df_rx_ranks[f'r{i+2}'] = get_rank(df_comp[col], True) 
         
     rx_scores = {row['id']: sum(row[f'r{i}'] * rx_weights[i] for i in range(10)) for index, row in df_rx_ranks.iterrows()}
+    
+    # [NEW] Apply HMO Bonus
+    if hmo_winner_id and hmo_winner_id in rx_scores:
+        rx_scores[hmo_winner_id] *= 1.15  # เพิ่มคะแนน 15% ให้ผู้ชนะ (ดัน Market Share ขึ้น)
+
     total_rx_score = sum(rx_scores.values())
     rx_shares = {k: (v/total_rx_score if total_rx_score else 0) for k,v in rx_scores.items()}
     df_comp['rx_share_result'] = df_comp['id'].map(rx_shares)
@@ -299,6 +317,7 @@ def calculate_results(store_list, rx_w_df, otc_w_df):
             "Turnover": tot_cogs / ((fin['inventory_rx']+fin['inventory_otc'])/2 + 1),
             "G Margin": (gross_margin/tot_sales*100) if tot_sales else 0,
             "Debt/NW": ((fin['long_term_debt'] + curr_liab) / nw) if nw else 0,
+            "HMO Winner": (tid == hmo_winner_id), # [NEW] Store winner status
             "Period": p['period']
         })
         p['prev_stats'] = { 'avg_price': avg_rx_price, 'mkt_share': my_rx_share*100, 'rx_per_hr': rx_count/(hrs_open*13), 'otc_markup': inp[13] }
@@ -403,13 +422,26 @@ if role == "Student":
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Net Profit", f"${last['Net Profit']:,.0f}")
                 m2.metric("Sales", f"${last['TOT SALES']:,.0f}")
-                m3.metric("Rx Share", f"{last['Rx Mkt Sh']:.1f}%")
+                
+                # [NEW] HMO Indicator
+                if last['HMO Winner']:
+                     m3.metric("Rx Share", f"{last['Rx Mkt Sh']:.1f}% 🏆")
+                     st.toast(f"🏆 {p['shop_name']} won the HMO Contract this period!", icon="🎉")
+                else:
+                     m3.metric("Rx Share", f"{last['Rx Mkt Sh']:.1f}%")
+                     
                 m4.metric("OTC Share", f"{last['OTC Mkt Sh']:.1f}%")
                 
+                if last['HMO Winner']:
+                    st.markdown('<span class="hmo-badge">🏆 HMO Contract Winner (Bonus Market Share)</span>', unsafe_allow_html=True)
+
                 df_hist = pd.DataFrame(p['history'])
-                display_cols = ["Period"] + [c for c in REPORT_COLUMNS if c in df_hist.columns]
-                fmt_dict = {col: "{:,.2f}" for col in REPORT_COLUMNS if col in df_hist.columns}
-                st.dataframe(df_hist[display_cols].style.format(fmt_dict), use_container_width=True, height=500)
+                # Remove internal fields for display
+                display_df = df_hist.drop(columns=['HMO Winner'], errors='ignore')
+                
+                display_cols = ["Period"] + [c for c in REPORT_COLUMNS if c in display_df.columns]
+                fmt_dict = {col: "{:,.2f}" for col in REPORT_COLUMNS if col in display_df.columns}
+                st.dataframe(display_df[display_cols].style.format(fmt_dict), use_container_width=True, height=500)
             else:
                 st.info("No history yet.")
 
@@ -431,7 +463,7 @@ elif role == "Instructor" and pwd == ADMIN_PASSWORD:
         rows = [p['history'][-1] for p in st.session_state.players.values() if p['history']]
         if rows:
             df = pd.DataFrame(rows).sort_values("Net Profit", ascending=False)
-            display_cols = ["Store Name", "Period"] + REPORT_COLUMNS
+            display_cols = ["Store Name", "Period", "HMO Winner"] + REPORT_COLUMNS
             fmt_dict = {col: "{:,.2f}" for col in REPORT_COLUMNS}
             st.dataframe(df[display_cols].style.format(fmt_dict), use_container_width=True)
         else:
