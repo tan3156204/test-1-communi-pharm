@@ -55,26 +55,15 @@ LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shoppi
 LOC_RENT_RATE = {1: 0.045, 2: 0.030, 3: 0.025}
 
 RX_WEIGHTS_CONFIG = {
-    "Price_Past": [10, 22, 25],     # Lower is better
-    "Price_Pres": [5, 5, 10],     # Lower is better
-    "Advertising Index":      [11, 13, 15],      # Higher is better
-    "Hours":      [7, 11, 12],      # Higher is better
-    "Delivery":   [10, 6, 1],       # Higher is better
-    "Patient Records":    [15, 8, 1],       # Higher is better
-    "Credit":     [3, 2, 1],        # Higher is better
-    "Inventory":  [10, 11, 10],        # Lower Ratio is better
-    "MktShare":   [23, 16, 5],        # Higher is better
-    "Rxs Per HOur": [6, 16, 10]         # Higher is better
+    "Price_Past": [10, 20, 25], "Price_Pres": [30, 25, 30], "Promo": [5, 10, 15],
+    "Hours": [20, 10, 5], "Delivery": [5, 10, 0], "Records": [10, 5, 0],
+    "Credit": [5, 5, 5], "Inventory": [5, 5, 0], "MktShare": [5, 5, 5], "Efficiency": [5, 5, 0]
+}
+OTC_WEIGHTS_CONFIG = {
+    "Markup_Past": [10, 20, 10], "Markup_Pres": [20, 30, 40], "Ad_Index": [20, 20, 30],
+    "Hours": [10, 10, 10], "Inventory": [10, 10, 10], "RxShare": [30, 10, 0]
 }
 
-OTC_WEIGHTS_CONFIG = {
-    "Markup_Past": [2, 15, 20],    # Lower is better
-    "Markup_Pres": [4, 15, 20],    # Lower is better
-    "Ad_Index":    [4, 10, 10],    # Higher is better
-    "Hours":       [2, 15, 15],    # Higher is better
-    "Inventory":   [3, 10, 20],    # Lower Ratio is better
-    "RxShare":     [5, 15, 15]      # Higher is better
-}
 # ==========================================
 # 2. STATE MANAGEMENT
 # ==========================================
