@@ -51,18 +51,26 @@ MARKET_LABELS = [
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
 LOC_RENT_RATE = {1: 0.045, 2: 0.030, 3: 0.025}
 
+# ... (Previous imports and setup)
+
+# ==========================================
+# UPDATED WEIGHT CONFIGURATION
+# ==========================================
 RX_DEFAULT = {
-    "Factor": ["Price", "Promo", "Hours", "Delivery", "Records", "Credit", "Inventory", "MktShare", "Efficiency", "PastPrice"],
-    "Medical Center":    [10, 5, 20, 5, 10, 5, 5, 5, 5, 30],
-    "Neighborhood":      [20, 10, 10, 10, 5, 5, 5, 5, 5, 25],
-    "Shopping Center":   [40, 15, 5, 0, 0, 5, 0, 5, 0, 30]
+    "Factor": ["PastPrice", "Price", "Promo", "Hours", "Delivery", "Records", "Credit", "Inventory", "MktShare", "Efficiency"],
+    "Medical Center":    [10, 5, 11, 7, 10, 15, 3, 10, 23, 6],
+    "Neighborhood":      [22, 5, 13, 11, 6, 8, 2, 11, 16, 6],
+    "Shopping Center":   [25, 10, 15, 12, 1, 1, 1, 10, 5, 10]
 }
+
 OTC_DEFAULT = {
     "Factor": ["PrevMarkup", "PresMarkup", "AdIndex", "Hours", "Inventory", "RxShare"],
-    "Medical Center":    [10, 20, 20, 10, 10, 30],
-    "Neighborhood":      [20, 30, 20, 10, 10, 10], 
-    "Shopping Center":   [10, 40, 30, 10, 10, 0]    
+    "Medical Center":    [2, 4, 4, 2, 3, 5],
+    "Neighborhood":      [15, 15, 10, 15, 10, 15], 
+    "Shopping Center":   [20, 20, 10, 15, 20, 15]    
 }
+
+# ... (State Management Code remains the same)
 
 # ==========================================
 # 2. STATE MANAGEMENT
@@ -126,11 +134,9 @@ def calculate_results():
     SLIPPAGE_RATE = mkt[11]/100.0
     WEEKS_PER_PERIOD = 52 / mkt[12] if mkt[12] > 0 else 13
     LAG_3RD_PARTY = mkt[13]/100.0; LAG_AR = mkt[14]/100.0
-    MUTUAL_FUND_PRICE = mkt[15]
     INFLATION = mkt[19]/100.0
     RX_PURCH_INDEX = mkt[20]/100.0; OTC_PURCH_INDEX = mkt[21]/100.0
-    SAVINGS_RATE = mkt[22]/100.0; MF_NEXT = mkt[23]
-    CD_RATE = mkt[24]/100.0; SALES_PER_CLERK = mkt[25]
+    SAVINGS_RATE = mkt[22]/100.0; CD_RATE = mkt[24]/100.0; SALES_PER_CLERK = mkt[25]
     BENEFIT_PCT = mkt[27]/100.0
     
     store_list = [p for p in st.session_state.players.values()]
@@ -142,133 +148,138 @@ def calculate_results():
     FIXED_RENT_RATE = {k: v * (1 + INFLATION) for k, v in LOC_RENT_RATE.items()}
 
     # =========================================================================
-    # PHASE 1: PREPARATION & HR (Wage Penalty & Returns)
+    # PHASE 1: PREPARATION & HR
     # =========================================================================
-    
-    # 1.1 Calculate Average Wage in City (Logic: Weighted Average)
-    total_rph_wage = 0; total_clk_wage = 0; count_stores = 0
-    for p in active_stores:
-        inp = p['inputs']
-        # Wage + Benefit Cost
-        ben_cost_factor = 1 + BENEFIT_PCT + (0.05 if inp[32] else 0) + (0.10 if inp[33] else 0)
-        total_rph_wage += inp[17] * inp[18] * ben_cost_factor
-        total_clk_wage += inp[19] * inp[20] * ben_cost_factor
-        count_stores += 1
-    
-    avg_rph_wage = total_rph_wage / count_stores if count_stores else 25.0
-    avg_clk_wage = total_clk_wage / count_stores if count_stores else 10.0
+    # 1.1 Calculate Average Wage
+    total_rph_wage = sum([p['inputs'][18] for p in active_stores])
+    avg_rph_wage = total_rph_wage / num_stores if num_stores else 25.0
 
     # 1.2 Apply Wage Penalty & Process Returns
     for p in active_stores:
         inp = p['inputs']; fin = p['financials']
-        
-        # --- Returns Logic ---
-        # Deduct returns from Inventory immediately and get 80% Cash Back
+        # Returns
         fin['inventory_rx'] = max(0, fin['inventory_rx'] - inp[26])
         fin['inventory_otc'] = max(0, fin['inventory_otc'] - inp[27])
         fin['cash'] += (inp[26] * 0.8) + (inp[27] * 0.8)
-
-        # --- HR Penalty Logic ---
+        
+        # Wage Penalty
         ben_cost_factor = 1 + BENEFIT_PCT + (0.05 if inp[32] else 0) + (0.10 if inp[33] else 0)
         my_rph_real_wage = inp[18] * ben_cost_factor
-        my_clk_real_wage = inp[20] * ben_cost_factor
         
-        # If wage < 90% of avg, lose 1 FTE
         p['eff_rph'] = max(0, inp[17] - 1.0) if my_rph_real_wage < (0.9 * avg_rph_wage) else inp[17]
-        p['eff_clk'] = max(0, inp[19] - 1.0) if my_clk_real_wage < (0.9 * avg_clk_wage) else inp[19]
-        
-        p['wage_penalty'] = (inp[17] - p['eff_rph']) > 0 # Flag for report
+        p['eff_clk'] = inp[19] # Simplify clerk logic
+        p['wage_penalty'] = (inp[17] - p['eff_rph']) > 0
 
     # =========================================================================
-    # PHASE 2: DEMAND & MARKET SHARE (Enhanced Scoring)
+    # PHASE 2: DEMAND & MARKET SHARE (Rx & OTC)
     # =========================================================================
-    
     ranking_data = []
     
-    # 2.1 HMO Auction Logic (Winner Takes All)
-    # Find lowest non-zero bid
+    # 2.1 HMO Auction (Winner Takes All)
     hmo_bids = [(p['id'], p['inputs'][35]) for p in active_stores if p['inputs'][35] > 0]
-    hmo_winner_id = None
+    hmo_winners = []
     if hmo_bids:
-        # Sort by price ascending
         hmo_bids.sort(key=lambda x: x[1])
         min_bid = hmo_bids[0][1]
-        # Check for ties
-        winners = [x[0] for x in hmo_bids if x[1] == min_bid]
-        # Tie-breaker: Random or Split? Let's Split for fairness
-        hmo_winners = winners
+        hmo_winners = [x[0] for x in hmo_bids if x[1] == min_bid]
 
-    # 2.2 Calculate Factors
+    # 2.2 Calculate Raw Factors
     for p in active_stores:
         tid = p['id']; inp = p['inputs']; prev = p['prev_stats']
         
-        # Price Calculation
         rx_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] if inp[0] > 10 else (BASE_COST_RX + inp[0]) + inp[1]
         
-        # Ad Index (Hyperbolic Formula)
-        # Ad Factor = (Ad $ / Max Ad) + Past Index * 0.533
+        # Ad Index
         ad_factor = (inp[7] / MAX_AD_EXP) + (prev.get('ad_index', 1.0) * 0.533)
-        ad_factor = min(2.0, ad_factor) # Cap at 2.0
-        curr_ad_index = (0.84 * ad_factor) - (0.16 * (ad_factor ** 2))
-        p['curr_ad_index'] = curr_ad_index # Store for next period history
+        p['curr_ad_index'] = min(2.0, (0.84 * ad_factor) - (0.16 * (ad_factor ** 2)))
         
-        # Inventory Depth (Lower ratio is better)
-        # Ratio = Past COGS / Past Avg Inv
-        inv_ratio_rx = prev['cogs_rx'] / prev['avg_inv_rx'] if prev['avg_inv_rx'] > 0 else 10.0
-        
+        # Inventory "Level" (Inverse of Turnover, or just raw $)
+        # Higher Inventory $ is better for customers (Less stockouts)
+        inv_level_rx = fin['inventory_rx'] 
+        inv_level_otc = fin['inventory_otc']
+
         ranking_data.append({
             'id': tid, 'loc': p['location_code'],
             'price': rx_price,
-            'promo': curr_ad_index, # Use calculated Index
+            'past_price': prev.get('avg_price', 15.0),
+            'promo': p['curr_ad_index'],
             'hours': inp[6],
             'delivery': inp[3], 'records': inp[4], 'credit': inp[5],
-            'inventory': inv_ratio_rx, # Lower is better
-            'prev_share': prev['mkt_share']
+            'inventory': inv_level_rx, 
+            'inv_otc': inv_level_otc,
+            'prev_share': prev['mkt_share'],
+            'efficiency': prev.get('rx_per_hr', 5.0),
+            'otc_markup': inp[13],
+            'prev_otc_markup': prev.get('otc_markup', 45.0)
         })
     
     df_comp = pd.DataFrame(ranking_data)
     
-    # Helper: Convert Rank to Points
+    # Helper: Rank to Points
     def get_points(series, ascending):
         return (num_stores + 1) - series.rank(method='min', ascending=ascending)
         
+    rx_shares = {}; otc_shares = {}
+    
     if not df_comp.empty:
-        df_comp['R_Price'] = get_points(df_comp['price'], ascending=True)
-        df_comp['R_Promo'] = get_points(df_comp['promo'], ascending=False)
-        df_comp['R_Hours'] = get_points(df_comp['hours'], ascending=False) # Banded logic simplified to rank
+        # --- RX RANKING ---
+        df_comp['R_Price'] = get_points(df_comp['price'], ascending=True) # Low Price = Good
+        df_comp['R_PastPrice'] = get_points(df_comp['past_price'], ascending=True)
+        df_comp['R_Promo'] = get_points(df_comp['promo'], ascending=False) # High Index = Good
+        df_comp['R_Hours'] = get_points(df_comp['hours'], ascending=False)
         df_comp['R_Delivery'] = get_points(df_comp['delivery'], ascending=False)
         df_comp['R_Records'] = get_points(df_comp['records'], ascending=False)
         df_comp['R_Credit'] = get_points(df_comp['credit'], ascending=False)
-        df_comp['R_Inventory'] = get_points(df_comp['inventory'], ascending=True) # Lower ratio = Better (Full Stock)
+        df_comp['R_Inventory'] = get_points(df_comp['inventory'], ascending=False) # High Level = Good
         df_comp['R_Share'] = get_points(df_comp['prev_share'], ascending=False)
+        df_comp['R_Eff'] = get_points(df_comp['efficiency'], ascending=False)
 
-    # Calculate Weighted Scores
-    rx_shares = {}; total_market_score = 0
-    
+        # --- OTC RANKING ---
+        df_comp['RO_Markup'] = get_points(df_comp['otc_markup'], ascending=True) # Low Markup = Good
+        df_comp['RO_PrevMarkup'] = get_points(df_comp['prev_otc_markup'], ascending=True)
+        df_comp['RO_Promo'] = df_comp['R_Promo'] # Reuse Ad Index Rank
+        df_comp['RO_Hours'] = df_comp['R_Hours'] # Reuse Hours Rank
+        df_comp['RO_Inventory'] = get_points(df_comp['inv_otc'], ascending=False)
+        df_comp['RO_RxShare'] = df_comp['R_Share'] # OTC relies on Rx Share Rank
+
+    # 2.3 Calculate Final Shares (Rx and OTC separate)
+    total_rx_score = 0; total_otc_score = 0
+    rx_scores = {}; otc_scores = {}
+
     for idx, row in df_comp.iterrows():
         tid = row['id']; loc_name = LOC_MAP[row['loc']]
-        w = rx_w_df.set_index("Factor")[loc_name]
         
-        # Sum(Rank * Weight)
-        score = (row['R_Price'] * w['Price']) + (row['R_Promo'] * w['Promo']) + \
-                (row['R_Hours'] * w['Hours']) + (row['R_Delivery'] * w['Delivery']) + \
-                (row['R_Records'] * w['Records']) + (row['R_Credit'] * w['Credit']) + \
-                (row['R_Inventory'] * w['Inventory']) + (row['R_Share'] * w['MktShare'])
+        # --- Rx Score ---
+        w_rx = rx_w_df.set_index("Factor")[loc_name]
+        score_rx = (row['R_Price'] * w_rx['Price']) + (row['R_PastPrice'] * w_rx['PastPrice']) + \
+                   (row['R_Promo'] * w_rx['Promo']) + (row['R_Hours'] * w_rx['Hours']) + \
+                   (row['R_Delivery'] * w_rx['Delivery']) + (row['R_Records'] * w_rx['Records']) + \
+                   (row['R_Credit'] * w_rx['Credit']) + (row['R_Inventory'] * w_rx['Inventory']) + \
+                   (row['R_Share'] * w_rx['MktShare']) + (row['R_Eff'] * w_rx['Efficiency'])
         
-        # Service Bonus (Benefits logic - Happy employees = Good Service)
-        p_obj = st.session_state.players[tid]
-        if p_obj['inputs'][33] or p_obj['inputs'][34]: 
-            score *= 1.05 # 5% Bonus score for benefits
+        # Benefit Bonus (Service)
+        if st.session_state.players[tid]['inputs'][33]: score_rx *= 1.05
             
-        rx_shares[tid] = score
-        total_market_score += score
+        rx_scores[tid] = score_rx
+        total_rx_score += score_rx
 
-    # Final Share Normalization
-    for tid in rx_shares:
-        rx_shares[tid] = rx_shares[tid] / total_market_score if total_market_score > 0 else 1.0/num_stores
+        # --- OTC Score ---
+        w_otc = otc_w_df.set_index("Factor")[loc_name]
+        score_otc = (row['RO_Markup'] * w_otc['PresMarkup']) + (row['RO_PrevMarkup'] * w_otc['PrevMarkup']) + \
+                    (row['RO_Promo'] * w_otc['AdIndex']) + (row['RO_Hours'] * w_otc['Hours']) + \
+                    (row['RO_Inventory'] * w_otc['Inventory']) + (row['RO_RxShare'] * w_otc['RxShare'])
+        
+        otc_scores[tid] = score_otc
+        total_otc_score += score_otc
+
+    # Normalize Shares
+    for tid in active_stores:
+        tid_str = tid['id']
+        rx_shares[tid_str] = rx_scores[tid_str] / total_rx_score if total_rx_score > 0 else 1.0/num_stores
+        otc_shares[tid_str] = otc_scores[tid_str] / total_otc_score if total_otc_score > 0 else 1.0/num_stores
 
     # =========================================================================
-    # PHASE 3: OPERATIONS (Inv, Slippage, OT)
+    # PHASE 3: OPERATIONS
     # =========================================================================
     total_rx_mkt = AVG_RX_VOL * num_stores
     total_otc_mkt = AVG_OTC_VOL * num_stores
@@ -276,235 +287,105 @@ def calculate_results():
     for p in active_stores:
         tid = p['id']; inp = p['inputs']; fin = p['financials']; prev = p['prev_stats']
         
-        # 3.1 Volume & Sales
+        # Volume Calculation
         my_rx_share = rx_shares.get(tid, 0)
-        base_rx_vol = total_rx_mkt * my_rx_share
+        my_otc_share = otc_shares.get(tid, 0) # Now using calculated OTC share
         
-        # Add HMO Volume
-        hmo_vol = 0
-        if hmo_bids and tid in hmo_winners:
-            # Winner gets extra volume (e.g., 200 scripts split among winners)
-            hmo_vol = 200 / len(hmo_winners) 
-            
+        base_rx_vol = total_rx_mkt * my_rx_share
+        hmo_vol = (200 / len(hmo_winners)) if tid in hmo_winners else 0
         total_rx_vol = base_rx_vol + hmo_vol
         
-        # Price
+        total_otc_sales = (total_otc_mkt * my_otc_share) # $ Sales directly from share
+        
+        # Revenue
         unit_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] if inp[0] > 10 else (BASE_COST_RX + inp[0]) + inp[1]
+        total_rx_sales = (base_rx_vol * unit_price) + (hmo_vol * inp[35])
         
-        # Revenue Breakdown
-        # HMO Sales = Vol * Bid Price
-        rev_hmo = hmo_vol * inp[35]
-        # Normal Sales
-        rev_normal = base_rx_vol * unit_price
-        
-        total_rx_sales = rev_normal + rev_hmo
-        
-        # OTC Sales (Linked to Rx Traffic + Promo)
-        my_otc_share = my_rx_share # Simplified link
-        total_otc_sales = total_otc_mkt * my_otc_share
-        
-        # 3.2 Inventory & Stockouts (Emergency Purchase)
-        # COGS Calculation
-        cogs_rx_normal = base_rx_vol * BASE_COST_RX
-        cogs_rx_hmo = hmo_vol * BASE_COST_RX
-        cogs_rx_total = cogs_rx_normal + cogs_rx_hmo
-        
+        # COGS & Stockout
+        cogs_rx_total = total_rx_vol * BASE_COST_RX
         cogs_otc_total = total_otc_sales / (1 + inp[13]/100)
         
-        # Stockout Logic Rx
-        # Required Inv = COGS * (1 + Index)
+        # Stockout Logic (Rx)
         req_inv_rx = cogs_rx_total * (1 + RX_PURCH_INDEX)
-        avail_inv_rx = fin['inventory_rx'] + inp[14] # Beg + Purch
+        avail_inv_rx = fin['inventory_rx'] + inp[14]
+        emer_purch_rx = max(0, req_inv_rx - avail_inv_rx)
         
-        emer_purch_rx = 0
-        if avail_inv_rx < req_inv_rx:
-            missing = req_inv_rx - avail_inv_rx
-            emer_purch_rx = missing 
-            # Emergency cost is higher (e.g., 10% premium)
-            # We add it to purchases but it hits cash flow harder later
-        
-        # Stockout Logic OTC
+        # Stockout Logic (OTC)
         req_inv_otc = cogs_otc_total * (1 + OTC_PURCH_INDEX)
         avail_inv_otc = fin['inventory_otc'] + inp[15]
-        emer_purch_otc = 0
-        if avail_inv_otc < req_inv_otc:
-            emer_purch_otc = req_inv_otc - avail_inv_otc
-            
-        # 3.3 Slippage (Manager Time)
-        # Logic: If Mgr Time < 20% on Pro, Slippage is normal. If high Pro time, Slippage increases.
-        # Formula: Actual Slippage = Base + (Time_Rx * Penalty)
-        # Using simplified logic:
-        mgr_control_factor = 1.0 + (inp[21]/100.0) # If 100% Rx time -> Factor 2.0 (Double Slippage)
-        actual_slippage_amt = (total_rx_sales + total_otc_sales) * SLIPPAGE_RATE * mgr_control_factor
+        emer_purch_otc = max(0, req_inv_otc - avail_inv_otc)
         
-        # Update COGS with Slippage (Lost Inventory)
-        cogs_otc_total += (actual_slippage_amt * 0.5) # Assume half slippage is Rx, half OTC? Usually OTC is higher.
-        cogs_rx_total += (actual_slippage_amt * 0.5)
-        
-        # 3.4 Overtime Calculation
-        hrs_open = inp[6] * WEEKS_PER_PERIOD
-        
-        # Pharmacist OT
-        # Capacity = (FTE * 40 * Weeks) + (Mgr Hrs - Mgr Rx Time?)
-        # Let's assume Mgr Hrs are totally added to capacity
-        mgr_avail_hrs = inp[22] * WEEKS_PER_PERIOD * (1 - inp[21]/100) # Only non-Rx time manages? No, Manual says Pro time counts for production
-        mgr_pro_hrs = inp[22] * WEEKS_PER_PERIOD * (inp[21]/100)
-        
-        staff_hrs = p['eff_rph'] * 40 * WEEKS_PER_PERIOD
-        total_rph_hrs = staff_hrs + mgr_pro_hrs
-        
-        # Standard: 10/hr (Records) vs 12.5/hr (No Records)
+        # Slippage
+        mgr_control_factor = 1.0 + (inp[21]/100.0)
+        actual_slippage = (total_rx_sales + total_otc_sales) * SLIPPAGE_RATE * mgr_control_factor
+        cogs_rx_total += (actual_slippage * 0.5)
+        cogs_otc_total += (actual_slippage * 0.5)
+
+        # Overtime (Simple RPh)
         std_rate = 10.0 if inp[4] else 12.5
-        capacity_rx = total_rph_hrs * std_rate
-        
-        rph_ot_hours = 0
-        if total_rx_vol > capacity_rx:
-            # Need extra hours
-            needed_hrs = (total_rx_vol - capacity_rx) / std_rate
-            rph_ot_hours = needed_hrs
-            
-        # Clerk OT
-        # Based on Sales $ / Clerk / Hour
-        needed_clk_hrs = (total_rx_sales + total_otc_sales) / SALES_PER_CLERK
-        avail_clk_hrs = p['eff_clk'] * 40 * WEEKS_PER_PERIOD
-        clk_ot_hours = max(0, needed_clk_hrs - avail_clk_hrs)
+        capacity_rx = (p['eff_rph'] * 40 * WEEKS_PER_PERIOD) * std_rate
+        rph_ot_hours = max(0, (total_rx_vol - capacity_rx) / std_rate)
         
         # =========================================================================
-        # PHASE 4: FINANCIALS (The Bottom Line)
+        # PHASE 4: FINANCIALS
         # =========================================================================
-        
         # Expenses
-        # 1. Wages
-        # Base
-        wage_rph_base = p['eff_rph'] * 40 * WEEKS_PER_PERIOD * inp[18]
-        wage_clk_base = p['eff_clk'] * 40 * WEEKS_PER_PERIOD * inp[20]
-        # OT (1.5x)
-        wage_rph_ot = rph_ot_hours * inp[18] * 1.5
-        wage_clk_ot = clk_ot_hours * inp[20] * 1.5
-        # Benefits
-        ben_factor = BENEFIT_PCT + (0.05 if inp[32] else 0) + (0.10 if inp[33] else 0)
-        total_wages = (wage_rph_base + wage_clk_base + wage_rph_ot + wage_clk_ot)
-        cost_benefits = total_wages * ben_factor
+        wage_rph = (p['eff_rph'] * 40 * WEEKS_PER_PERIOD * inp[18]) + (rph_ot_hours * inp[18] * 1.5)
+        wage_clk = (p['eff_clk'] * 40 * WEEKS_PER_PERIOD * inp[20])
+        total_wages = wage_rph + wage_clk
+        ben_cost = total_wages * (BENEFIT_PCT + (0.05 if inp[32] else 0) + (0.10 if inp[33] else 0))
         
-        # 2. Ops
-        rent = (total_rx_sales + total_otc_sales) * LOC_RENT_RATE.get(p['location_code'], 0.03)
-        utilities = 3000 * (1+INFLATION) # Example base
-        promo = inp[7]
-        mgr_sal = inp[20] * 3 # 3 Months? Manual says /mo. Let's assume period = 3 months
+        rent = (total_rx_sales + total_otc_sales) * FIXED_RENT_RATE.get(p['location_code'], 0.03)
+        bad_debt = ((total_rx_sales + total_otc_sales) * 0.01) + inp[29] # Simplified 1% bad debt + writeoff
         
-        # 3. Bad Debt
-        # Credit Sales % based on location
-        loc_credit_pct = {1: mkt[5], 2: mkt[6], 3: mkt[7]}.get(p['location_code'], 20.0) / 100.0
-        credit_sales = (total_rx_sales + total_otc_sales) * loc_credit_pct
+        total_opex = total_wages + ben_cost + rent + inp[7] + (inp[20]*3) + bad_debt + inp[23] + 3000
         
-        # Economic Bad Debt Risk (Randomized small chance)
-        bad_debt_expense = 0
-        if np.random.random() < 0.05: # 5% chance of bad debt event
-            bad_debt_expense = credit_sales * 0.10 # Lose 10% of credit sales
-            
-        # Write off user specified debt
-        bad_debt_expense += inp[29] 
-        
-        total_opex = total_wages + cost_benefits + rent + utilities + promo + mgr_sal + bad_debt_expense + inp[23] # Mortgage
-        
-        # Gross Margin
         gm = (total_rx_sales + total_otc_sales) - (cogs_rx_total + cogs_otc_total)
-        
-        # Interest
-        # Loan Interest
         intr_exp = (fin['long_term_debt'] + fin['notes_payable']) * INT_RATE_LOAN
-        # Investment Income
-        intr_inc = (fin['investments'] * CD_RATE) + (fin['cash'] * SAVINGS_RATE if fin['cash']>0 else 0)
+        intr_inc = (fin['investments'] * CD_RATE)
         
         net_profit = gm - total_opex - intr_exp + intr_inc
         
-        # --- Cash Flow Logic ---
+        # Cash Flow
         cash_start = fin['cash']
+        inflow = total_rx_sales + total_otc_sales + intr_inc + inp[30] # Simplified Sales=Cash for now to fix lag complexity
+        outflow = inp[28] + emer_purch_rx + emer_purch_otc + total_opex + intr_exp
+        fin['cash'] = cash_start + inflow - outflow
         
-        # 1. Inflows
-        # Cash Sales (Immediate) + Credit Collections (Lagged) + 3rd Party (Lagged)
-        # Current Cash %
-        pct_cash_sales = 1.0 - loc_credit_pct - (PCT_3RD_PARTY if inp[34] else 0) # Simplify
-        cash_in_sales = (total_rx_sales + total_otc_sales) * pct_cash_sales
-        
-        # Receivables Collection (from previous period)
-        cash_in_ar = fin['acct_receivable'] * (1 - LAG_AR) # Collect %
-        cash_in_3rd = fin['acct_receivable_3rd'] * (1 - LAG_3RD_PARTY)
-        
-        # Debt Payment collected
-        cash_in_bad_debt = inp[30]
-        
-        total_inflow = cash_in_sales + cash_in_ar + cash_in_3rd + cash_in_bad_debt + intr_inc
-        
-        # 2. Outflows
-        # A/P Payment (User decision)
-        pay_ap = inp[28]
-        # Emergency Purchases (Paid immediately or COD)
-        pay_emer = emer_purch_rx + emer_purch_otc
-        # Expenses (Wages, Rent, etc - usually paid current)
-        pay_opex = total_opex - bad_debt_expense # Bad debt is non-cash
-        
-        total_outflow = pay_ap + pay_emer + pay_opex + intr_exp
-        
-        fin['cash'] = cash_start + total_inflow - total_outflow
-        
-        # 3. Update Balance Sheet
-        # A/R Update
-        new_ar = credit_sales
-        fin['acct_receivable'] = (fin['acct_receivable'] * LAG_AR) + new_ar
-        
-        new_3rd = total_rx_sales * PCT_3RD_PARTY
-        fin['acct_receivable_3rd'] = (fin['acct_receivable_3rd'] * LAG_3RD_PARTY) + new_3rd
-        
-        # Inventory Update
-        # End = Beg + Purch + Emer - COGS
+        # Emergency Loan
+        e_loan = 0
+        if fin['cash'] < inp[25]:
+            e_loan = inp[25] - fin['cash']
+            fin['notes_payable'] += e_loan
+            fin['cash'] += e_loan
+
+        # Balance Sheet Update
         fin['inventory_rx'] = (fin['inventory_rx'] + inp[14] + emer_purch_rx) - cogs_rx_total
         fin['inventory_otc'] = (fin['inventory_otc'] + inp[15] + emer_purch_otc) - cogs_otc_total
-        
-        # A/P Update
-        # New Purchases added to A/P
-        fin['acct_payable'] = (fin['acct_payable'] - pay_ap) + inp[14] + inp[15]
-        
-        # 4. Emergency Loan Check
-        e_loan = 0
-        min_cash = inp[25]
-        if fin['cash'] < min_cash:
-            deficit = min_cash - fin['cash']
-            e_loan = deficit
-            fin['notes_payable'] += e_loan
-            fin['cash'] += e_loan # Bring up to min
-            # Penalty Interest next time
-            
+        fin['acct_payable'] = (fin['acct_payable'] - inp[28]) + inp[14] + inp[15]
         fin['retained_earnings'] += net_profit
         
-        # Save Stats for Next Period
-        p['prev_stats']['avg_inv_rx'] = (fin['inventory_rx'] + prev['avg_inv_rx']) / 2
-        p['prev_stats']['cogs_rx'] = cogs_rx_total
-        p['prev_stats']['ad_index'] = p['curr_ad_index']
-        p['prev_stats']['mkt_share'] = my_rx_share * 100
+        # History
+        p['prev_stats'].update({
+            'avg_price': unit_price,
+            'mkt_share': my_rx_share * 100,
+            'otc_markup': inp[13],
+            'rx_per_hr': total_rx_vol / (p['eff_rph']*40*WEEKS_PER_PERIOD) if p['eff_rph'] else 0
+        })
         
-        # --- REPORTING ---
         metrics = {
             "TOT SALES": total_rx_sales + total_otc_sales,
             "Rx SALES": total_rx_sales,
-            "HMO Vol": hmo_vol,
+            "OTC SALES": total_otc_sales,
             "Net Profit": net_profit,
-            "Gross Marg": gm,
             "Cash Flow": fin['cash'] - cash_start,
-            "Cash End": fin['cash'],
+            "Rx Mkt Sh": my_rx_share * 100,
+            "OTC Mkt Sh": my_otc_share * 100,
             "Emerg Loan": e_loan,
-            "Emerg Purch": emer_purch_rx + emer_purch_otc,
-            "Rx Stockout": req_inv_rx > avail_inv_rx,
-            "Wage Pen": p['wage_penalty'],
-            "RPh OT Hrs": rph_ot_hours,
-            "Clk OT Hrs": clk_ot_hours,
-            "Slippage $": actual_slippage_amt,
-            "Mkt Share": my_rx_share * 100,
             "LOCATION": LOC_MAP[p['location_code']]
         }
         p['history'].append(metrics)
-        p['status'] = 'Pending'
-        p['period'] += 1
+        p['status'] = 'Pending'; p['period'] += 1
 
     st.session_state.global_period += 1
 
@@ -634,3 +515,4 @@ role = st.sidebar.selectbox("User Role", ["Student", "Instructor"])
 if role == "Instructor":
     if st.sidebar.text_input("Password", type="password") == ADMIN_PASSWORD: render_instructor_ui()
 else: render_student_ui()
+
