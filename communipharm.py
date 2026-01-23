@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V30 (Full Report)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V32 (Weighted Rank Share)", layout="wide")
 
 st.markdown("""
 <style>
@@ -104,51 +104,114 @@ def initialize_teams(num_teams):
         }
 
 # ==========================================
-# 3. LOGIC ENGINE
+# 3. LOGIC ENGINE (CORRECTED EQUATION)
 # ==========================================
 def calculate_results():
-    rx_w_df = st.session_state.rx_weights_df; mkt = st.session_state.market_data_list
+    rx_w_df = st.session_state.rx_weights_df
+    otc_w_df = st.session_state.otc_weights_df
+    mkt = st.session_state.market_data_list
     
     # Market Data Unpacking
     BASE_COST_RX = mkt[0]; PCT_3RD_PARTY = mkt[3]/100.0
     INT_RATE_LOAN = mkt[8]/100.0; AVG_RX_VOL = mkt[9]; AVG_OTC_VOL = mkt[10]
     WEEKS_PER_PERIOD = 52 / mkt[12] if mkt[12] > 0 else 13
+    SALES_PER_CLERK = mkt[25]
     
     store_list = [p for p in st.session_state.players.values()]
+    num_stores = len([p for p in store_list if p['location_code'] != 0])
     
-    # 1. Market Share Calculation
-    data = []
-    for p in store_list:
-        tid = p['id']; inp = p['inputs']; prev = p['prev_stats']
-        price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] if inp[0] > 10 else (BASE_COST_RX + inp[0]) + inp[1]
-        data.append({
-            'id': tid, 'loc': p['location_code'], 'price': price,
-            'promo': inp[7], 'hours': inp[6], 'mkt_share': prev['mkt_share']
-        })
-    df_comp = pd.DataFrame(data)
-    rx_shares = {}; otc_shares = {}
-    
-    for loc_code in [1, 2, 3]:
-        sub_df = df_comp[df_comp['loc'] == loc_code].copy()
-        if sub_df.empty: continue
-        loc_name = LOC_MAP[loc_code]
-        rx_w = rx_w_df.set_index("Factor")[loc_name].values
-        # Simple Ranking
-        sub_df['score'] = (sub_df['price'].rank(ascending=False)*rx_w[0]) + (sub_df['promo'].rank(ascending=True)*rx_w[1])
-        tot = sub_df['score'].sum()
-        for idx, row in sub_df.iterrows(): rx_shares[row['id']] = row['score']/tot if tot else 0
-        for idx, row in sub_df.iterrows(): otc_shares[row['id']] = 1.0/len(sub_df)
+    if num_stores == 0: return
 
+    # ------------------------------------------------------------------
+    # 1. Market Share Calculation (Weighted Rank Share Formula)
+    # Equation: Share_s = Sum(R_i * W_ij) / Sum_s(Sum(R_is * W_ijs))
+    # ------------------------------------------------------------------
+    
+    # Step 1.1: Collect Data for City-Wide Ranking
+    ranking_data = []
+    for p in store_list:
+        if p['location_code'] == 0: continue
+        tid = p['id']; inp = p['inputs']; prev = p['prev_stats']
+        
+        price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] if inp[0] > 10 else (BASE_COST_RX + inp[0]) + inp[1]
+        
+        ranking_data.append({
+            'id': tid, 'loc': p['location_code'],
+            'price': price,
+            'promo': inp[7],
+            'hours': inp[6],
+            'delivery': inp[3],
+            'records': inp[4],
+            'credit': inp[5],
+            'prev_share': prev['mkt_share']
+        })
+    
+    df_comp = pd.DataFrame(ranking_data)
+    
+    # Helper: Convert Rank to Points (Rank 1 = Highest Points)
+    def get_points(series, ascending):
+        # (N + 1) - Rank
+        return (num_stores + 1) - series.rank(method='min', ascending=ascending)
+        
+    # Step 1.2: Calculate Rank Points (R) for each factor
+    if not df_comp.empty:
+        df_comp['R_Price'] = get_points(df_comp['price'], ascending=True)  # Lower Price is better
+        df_comp['R_Promo'] = get_points(df_comp['promo'], ascending=False) # Higher Promo is better
+        df_comp['R_Hours'] = get_points(df_comp['hours'], ascending=False)
+        df_comp['R_Delivery'] = get_points(df_comp['delivery'], ascending=False)
+        df_comp['R_Records'] = get_points(df_comp['records'], ascending=False)
+        df_comp['R_Credit'] = get_points(df_comp['credit'], ascending=False)
+        df_comp['R_Share'] = get_points(df_comp['prev_share'], ascending=False)
+
+    # Step 1.3: Calculate Weighted Score & Market Share
+    rx_shares = {}
+    otc_shares = {}
+    total_market_score = 0
+    store_scores = {}
+
+    for idx, row in df_comp.iterrows():
+        tid = row['id']
+        loc_name = LOC_MAP[row['loc']]
+        
+        # Get Weights for this store's location
+        w = rx_w_df.set_index("Factor")[loc_name]
+        
+        # Calculate Sum(R * W) for this store
+        # Factors map to RX_DEFAULT keys
+        my_score = (row['R_Price'] * w['Price']) + \
+                   (row['R_Promo'] * w['Promo']) + \
+                   (row['R_Hours'] * w['Hours']) + \
+                   (row['R_Delivery'] * w['Delivery']) + \
+                   (row['R_Records'] * w['Records']) + \
+                   (row['R_Credit'] * w['Credit']) + \
+                   (row['R_Share'] * w['MktShare'])
+                   
+        store_scores[tid] = my_score
+        total_market_score += my_score # Accumulate denominator
+    
+    # Final Share Calculation
+    for tid in store_scores:
+        if total_market_score > 0:
+            rx_shares[tid] = store_scores[tid] / total_market_score
+        else:
+            rx_shares[tid] = 1.0 / num_stores
+            
+        otc_shares[tid] = rx_shares[tid] # Use Rx share for OTC for now
+
+    # ------------------------------------------------------------------
     # 2. Financials & Detailed Metrics
-    total_rx_mkt = AVG_RX_VOL * len(store_list)
-    total_otc_mkt = AVG_OTC_VOL * len(store_list)
+    # ------------------------------------------------------------------
+    total_rx_mkt = AVG_RX_VOL * num_stores
+    total_otc_mkt = AVG_OTC_VOL * num_stores
     
     for p in store_list:
         if p['location_code'] == 0: continue
         tid = p['id']; inp = p['inputs']; fin = p['financials']
         
         # Sales Logic
-        my_rx_sh = rx_shares.get(tid, 0); my_otc_sh = otc_shares.get(tid, 0)
+        my_rx_sh = rx_shares.get(tid, 0)
+        my_otc_sh = otc_shares.get(tid, 0)
+        
         rx_count = total_rx_mkt * my_rx_sh
         rx_3pty_count = rx_count * PCT_3RD_PARTY
         
@@ -176,9 +239,10 @@ def calculate_results():
         rph_total = rph_base_pay + rph_ot_pay
         
         # Clerk
+        req_clerk = tot_sales / SALES_PER_CLERK / WEEKS_PER_PERIOD / 40 if SALES_PER_CLERK else 1
         clk_base_pay = inp[19] * std_hours * inp[20]
-        clk_ot_pay = inp[19] * ot_hours * inp[20] * 1.5
-        clk_total = clk_base_pay + clk_ot_pay
+        # Simplify clerk OT logic
+        clk_total = clk_base_pay 
         
         rent = tot_sales * LOC_RENT_RATE.get(p['location_code'], 0.03)
         mortgage = inp[24]
@@ -214,7 +278,7 @@ def calculate_results():
             "Avg Rx Pr": price,
             "Rx Ing $": BASE_COST_RX,
             "Rx GM%": (gm_rx/rx_sales*100) if rx_sales else 0,
-            "3-Pty GM%": (gm_rx/rx_sales*100) * 0.9, # Simulated lower margin
+            "3-Pty GM%": (gm_rx/rx_sales*100) * 0.9, 
             "Tot #Rx's": rx_count,
             "3-Pty #Rx": rx_3pty_count,
             "Copay Dis": inp[2],
@@ -225,14 +289,14 @@ def calculate_results():
             "M'age Pay": mortgage,
             "E. Loan": e_loan,
             "Mgr Hrs": inp[22],
-            "RP OverT": ot_hours / WEEKS_PER_PERIOD, # Avg per week
+            "RP OverT": ot_hours / WEEKS_PER_PERIOD, 
             "RP Hr Pay": inp[18],
-            "Clk OverT": ot_hours / WEEKS_PER_PERIOD,
+            "Clk OverT": 0,
             "Clk Wage": inp[20],
             "Adv Exp": promo,
             "Net Worth": nw,
-            "Cash Flow": fin['cash'] - cash_start, # Net change
-            "E Rx Pur": inp[14], # Using purchase input as proxy
+            "Cash Flow": fin['cash'] - cash_start,
+            "E Rx Pur": inp[14], 
             "E OTC Pur": inp[15],
             
             # RATIOS
@@ -250,8 +314,8 @@ def calculate_results():
         
         p['history'].append(metrics)
         p['status'] = 'Pending'
-        p['period'] += 1 # Increment Student Period
-        p['prev_stats']['mkt_share'] = my_rx_sh
+        p['period'] += 1 
+        p['prev_stats']['mkt_share'] = my_rx_sh * 100
 
     st.session_state.global_period += 1
 
@@ -259,7 +323,7 @@ def calculate_results():
 # 4. UI COMPONENTS
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V30")
+    st.title("💊 Communi-Pharm V32")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def render_instructor_ui():
@@ -294,26 +358,34 @@ def render_instructor_ui():
         if any(p['history'] for p in st.session_state.players.values()):
             # Collect data
             report_data = {}
-            metrics_order = list(st.session_state.players['team_1']['history'][-1].keys())
+            # Get metrics keys from first active player
+            first_active = next((p for p in st.session_state.players.values() if p['history']), None)
             
-            for tid, p in st.session_state.players.items():
-                if p['history']:
-                    last_metrics = p['history'][-1]
-                    report_data[p['shop_name']] = [last_metrics[m] for m in metrics_order]
-            
-            df_rep = pd.DataFrame(report_data, index=metrics_order)
-            
-            # Formatting
-            def format_val(val, idx):
-                if idx == "LOCATION": return val
-                if any(x in idx for x in ["%", "Rate", "ROI", "ROA", "Margin", "Profit"]): return f"{val:.2f}%"
-                if any(x in idx for x in ["$", "SALES", "Cost", "Pay", "Wage", "Exp", "Worth", "Flow", "Pur"]): return f"${val:,.0f}"
-                return f"{val:,.2f}"
+            if first_active:
+                metrics_order = list(first_active['history'][-1].keys())
+                
+                for tid, p in st.session_state.players.items():
+                    if p['history']:
+                        last_metrics = p['history'][-1]
+                        report_data[p['shop_name']] = [last_metrics.get(m, 0) for m in metrics_order]
+                
+                df_rep = pd.DataFrame(report_data, index=metrics_order)
+                
+                # Formatting
+                def format_val(val, idx):
+                    if idx == "LOCATION": return val
+                    try:
+                        v_float = float(val)
+                        if any(x in idx for x in ["%", "Rate", "ROI", "ROA", "Margin", "Profit"]): return f"{v_float:.2f}%"
+                        if any(x in idx for x in ["$", "SALES", "Cost", "Pay", "Wage", "Exp", "Worth", "Flow", "Pur"]): return f"${v_float:,.0f}"
+                        return f"{v_float:,.2f}"
+                    except:
+                        return val
 
-            for col in df_rep.columns:
-                df_rep[col] = [format_val(v, i) for i, v in zip(df_rep.index, df_rep[col])]
-            
-            st.dataframe(df_rep, height=800, use_container_width=True)
+                for col in df_rep.columns:
+                    df_rep[col] = [format_val(v, i) for i, v in zip(df_rep.index, df_rep[col])]
+                
+                st.dataframe(df_rep, height=800, use_container_width=True)
         
         st.divider()
         c1, c2 = st.columns([3, 2])
