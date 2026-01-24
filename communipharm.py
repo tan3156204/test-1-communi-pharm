@@ -6,7 +6,7 @@ import math
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V32 (Enhanced Logic)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V35 (Hybrid)", layout="wide")
 
 st.markdown("""
 <style>
@@ -18,6 +18,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 ADMIN_PASSWORD = "admin"
+
+# --- LILLY DIGEST BENCHMARKS (สำหรับ UI ใหม่) ---
+LILLY_BENCHMARKS = {
+    "Gross Margin %": 32.5,
+    "Payroll Expenses %": 13.5,
+    "Rent %": 2.8,
+    "Net Profit %": 3.5,
+    "Inventory Turnover": 5.5,
+    "Current Ratio": 2.5,
+    "ROA": 10.0,
+    "ROE": 15.0
+}
 
 # --- MAPPINGS ---
 INPUT_LABELS = [
@@ -51,11 +63,7 @@ MARKET_LABELS = [
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
 LOC_RENT_RATE = {1: 0.045, 2: 0.030, 3: 0.025}
 
-# ... (Previous imports and setup)
-
-# ==========================================
-# UPDATED WEIGHT CONFIGURATION
-# ==========================================
+# --- WEIGHT CONFIGURATION (คงเดิมตามที่คุณต้องการ) ---
 RX_DEFAULT = {
     "Factor": ["PastPrice", "Price", "Promo", "Hours", "Delivery", "Records", "Credit", "Inventory", "MktShare", "Efficiency"],
     "Medical Center":    [10, 5, 11, 7, 10, 15, 3, 10, 23, 6],
@@ -69,8 +77,6 @@ OTC_DEFAULT = {
     "Neighborhood":      [15, 15, 10, 15, 10, 15], 
     "Shopping Center":   [20, 20, 10, 15, 20, 15]    
 }
-
-# ... (State Management Code remains the same)
 
 # ==========================================
 # 2. STATE MANAGEMENT
@@ -105,7 +111,6 @@ def initialize_teams(num_teams):
             'fixed_assets': 50000.0, 'acct_payable': 30000.0,
             'notes_payable': 0.0, 'long_term_debt': 100000.0, 'retained_earnings': 138000.0
         }
-        # Enhanced Prev Stats for Logic
         prev_stats = { 
             'avg_price': 15.00, 'mkt_share': 100.0/num_teams, 
             'rx_per_hr': 5.0, 'otc_markup': 45.0,
@@ -119,7 +124,7 @@ def initialize_teams(num_teams):
         }
 
 # ==========================================
-# 3. LOGIC ENGINE (MASTER CALCULATION)
+# 3. LOGIC ENGINE (V32 Logic + V34 Reporting Data)
 # ==========================================
 def calculate_results():
     rx_w_df = st.session_state.rx_weights_df
@@ -147,14 +152,10 @@ def calculate_results():
     # Update Fixed Expenses with Inflation
     FIXED_RENT_RATE = {k: v * (1 + INFLATION) for k, v in LOC_RENT_RATE.items()}
 
-    # =========================================================================
-    # PHASE 1: PREPARATION & HR
-    # =========================================================================
-    # 1.1 Calculate Average Wage
+    # --- PHASE 1: HR ---
     total_rph_wage = sum([p['inputs'][18] for p in active_stores])
     avg_rph_wage = total_rph_wage / num_stores if num_stores else 25.0
 
-    # 1.2 Apply Wage Penalty & Process Returns
     for p in active_stores:
         inp = p['inputs']; fin = p['financials']
         # Returns
@@ -170,12 +171,10 @@ def calculate_results():
         p['eff_clk'] = inp[19] # Simplify clerk logic
         p['wage_penalty'] = (inp[17] - p['eff_rph']) > 0
 
-    # =========================================================================
-    # PHASE 2: DEMAND & MARKET SHARE (Rx & OTC)
-    # =========================================================================
+    # --- PHASE 2: MARKET SHARE ---
     ranking_data = []
     
-    # 2.1 HMO Auction (Winner Takes All)
+    # HMO Auction
     hmo_bids = [(p['id'], p['inputs'][35]) for p in active_stores if p['inputs'][35] > 0]
     hmo_winners = []
     if hmo_bids:
@@ -183,20 +182,16 @@ def calculate_results():
         min_bid = hmo_bids[0][1]
         hmo_winners = [x[0] for x in hmo_bids if x[1] == min_bid]
 
-    # 2.2 Calculate Raw Factors
+    # Calculate Factors
     for p in active_stores:
         tid = p['id']; inp = p['inputs']; prev = p['prev_stats']
         
         rx_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] if inp[0] > 10 else (BASE_COST_RX + inp[0]) + inp[1]
         
-        # Ad Index
         ad_factor = (inp[7] / MAX_AD_EXP) + (prev.get('ad_index', 1.0) * 0.533)
         p['curr_ad_index'] = min(2.0, (0.84 * ad_factor) - (0.16 * (ad_factor ** 2)))
         
-        # Inventory "Level" (Inverse of Turnover, or just raw $)
-        # Higher Inventory $ is better for customers (Less stockouts)
-        inv_level_rx = fin['inventory_rx'] 
-        inv_level_otc = fin['inventory_otc']
+        inv_level_rx = fin['inventory_rx']; inv_level_otc = fin['inventory_otc']
 
         ranking_data.append({
             'id': tid, 'loc': p['location_code'],
@@ -205,8 +200,7 @@ def calculate_results():
             'promo': p['curr_ad_index'],
             'hours': inp[6],
             'delivery': inp[3], 'records': inp[4], 'credit': inp[5],
-            'inventory': inv_level_rx, 
-            'inv_otc': inv_level_otc,
+            'inventory': inv_level_rx, 'inv_otc': inv_level_otc,
             'prev_share': prev['mkt_share'],
             'efficiency': prev.get('rx_per_hr', 5.0),
             'otc_markup': inp[13],
@@ -215,41 +209,40 @@ def calculate_results():
     
     df_comp = pd.DataFrame(ranking_data)
     
-    # Helper: Rank to Points
     def get_points(series, ascending):
         return (num_stores + 1) - series.rank(method='min', ascending=ascending)
         
     rx_shares = {}; otc_shares = {}
     
     if not df_comp.empty:
-        # --- RX RANKING ---
-        df_comp['R_Price'] = get_points(df_comp['price'], ascending=True) # Low Price = Good
-        df_comp['R_PastPrice'] = get_points(df_comp['past_price'], ascending=True)
-        df_comp['R_Promo'] = get_points(df_comp['promo'], ascending=False) # High Index = Good
-        df_comp['R_Hours'] = get_points(df_comp['hours'], ascending=False)
-        df_comp['R_Delivery'] = get_points(df_comp['delivery'], ascending=False)
-        df_comp['R_Records'] = get_points(df_comp['records'], ascending=False)
-        df_comp['R_Credit'] = get_points(df_comp['credit'], ascending=False)
-        df_comp['R_Inventory'] = get_points(df_comp['inventory'], ascending=False) # High Level = Good
-        df_comp['R_Share'] = get_points(df_comp['prev_share'], ascending=False)
-        df_comp['R_Eff'] = get_points(df_comp['efficiency'], ascending=False)
+        # Rx Ranking
+        df_comp['R_Price'] = get_points(df_comp['price'], True)
+        df_comp['R_PastPrice'] = get_points(df_comp['past_price'], True)
+        df_comp['R_Promo'] = get_points(df_comp['promo'], False)
+        df_comp['R_Hours'] = get_points(df_comp['hours'], False)
+        df_comp['R_Delivery'] = get_points(df_comp['delivery'], False)
+        df_comp['R_Records'] = get_points(df_comp['records'], False)
+        df_comp['R_Credit'] = get_points(df_comp['credit'], False)
+        df_comp['R_Inventory'] = get_points(df_comp['inventory'], False)
+        df_comp['R_Share'] = get_points(df_comp['prev_share'], False)
+        df_comp['R_Eff'] = get_points(df_comp['efficiency'], False)
 
-        # --- OTC RANKING ---
-        df_comp['RO_Markup'] = get_points(df_comp['otc_markup'], ascending=True) # Low Markup = Good
-        df_comp['RO_PrevMarkup'] = get_points(df_comp['prev_otc_markup'], ascending=True)
-        df_comp['RO_Promo'] = df_comp['R_Promo'] # Reuse Ad Index Rank
-        df_comp['RO_Hours'] = df_comp['R_Hours'] # Reuse Hours Rank
-        df_comp['RO_Inventory'] = get_points(df_comp['inv_otc'], ascending=False)
-        df_comp['RO_RxShare'] = df_comp['R_Share'] # OTC relies on Rx Share Rank
+        # OTC Ranking
+        df_comp['RO_Markup'] = get_points(df_comp['otc_markup'], True)
+        df_comp['RO_PrevMarkup'] = get_points(df_comp['prev_otc_markup'], True)
+        df_comp['RO_Promo'] = df_comp['R_Promo']
+        df_comp['RO_Hours'] = df_comp['R_Hours']
+        df_comp['RO_Inventory'] = get_points(df_comp['inv_otc'], False)
+        df_comp['RO_RxShare'] = df_comp['R_Share']
 
-    # 2.3 Calculate Final Shares (Rx and OTC separate)
+    # Final Shares
     total_rx_score = 0; total_otc_score = 0
     rx_scores = {}; otc_scores = {}
 
     for idx, row in df_comp.iterrows():
         tid = row['id']; loc_name = LOC_MAP[row['loc']]
         
-        # --- Rx Score ---
+        # Rx
         w_rx = rx_w_df.set_index("Factor")[loc_name]
         score_rx = (row['R_Price'] * w_rx['Price']) + (row['R_PastPrice'] * w_rx['PastPrice']) + \
                    (row['R_Promo'] * w_rx['Promo']) + (row['R_Hours'] * w_rx['Hours']) + \
@@ -257,100 +250,108 @@ def calculate_results():
                    (row['R_Credit'] * w_rx['Credit']) + (row['R_Inventory'] * w_rx['Inventory']) + \
                    (row['R_Share'] * w_rx['MktShare']) + (row['R_Eff'] * w_rx['Efficiency'])
         
-        # Benefit Bonus (Service)
         if st.session_state.players[tid]['inputs'][33]: score_rx *= 1.05
-            
-        rx_scores[tid] = score_rx
-        total_rx_score += score_rx
+        rx_scores[tid] = score_rx; total_rx_score += score_rx
 
-        # --- OTC Score ---
+        # OTC
         w_otc = otc_w_df.set_index("Factor")[loc_name]
         score_otc = (row['RO_Markup'] * w_otc['PresMarkup']) + (row['RO_PrevMarkup'] * w_otc['PrevMarkup']) + \
                     (row['RO_Promo'] * w_otc['AdIndex']) + (row['RO_Hours'] * w_otc['Hours']) + \
                     (row['RO_Inventory'] * w_otc['Inventory']) + (row['RO_RxShare'] * w_otc['RxShare'])
         
-        otc_scores[tid] = score_otc
-        total_otc_score += score_otc
+        otc_scores[tid] = score_otc; total_otc_score += score_otc
 
-    # Normalize Shares
     for tid in active_stores:
         tid_str = tid['id']
         rx_shares[tid_str] = rx_scores[tid_str] / total_rx_score if total_rx_score > 0 else 1.0/num_stores
         otc_shares[tid_str] = otc_scores[tid_str] / total_otc_score if total_otc_score > 0 else 1.0/num_stores
 
-    # =========================================================================
-    # PHASE 3: OPERATIONS
-    # =========================================================================
-    total_rx_mkt = AVG_RX_VOL * num_stores
-    total_otc_mkt = AVG_OTC_VOL * num_stores
+    # --- PHASE 3: OPERATIONS ---
+    total_rx_mkt = AVG_RX_VOL * num_stores; total_otc_mkt = AVG_OTC_VOL * num_stores
     
     for p in active_stores:
         tid = p['id']; inp = p['inputs']; fin = p['financials']; prev = p['prev_stats']
         
-        # Volume Calculation
-        my_rx_share = rx_shares.get(tid, 0)
-        my_otc_share = otc_shares.get(tid, 0) # Now using calculated OTC share
-        
+        # Sales
+        my_rx_share = rx_shares.get(tid, 0); my_otc_share = otc_shares.get(tid, 0)
         base_rx_vol = total_rx_mkt * my_rx_share
         hmo_vol = (200 / len(hmo_winners)) if tid in hmo_winners else 0
         total_rx_vol = base_rx_vol + hmo_vol
         
-        total_otc_sales = (total_otc_mkt * my_otc_share) # $ Sales directly from share
-        
-        # Revenue
+        total_otc_sales = (total_otc_mkt * my_otc_share) 
         unit_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] if inp[0] > 10 else (BASE_COST_RX + inp[0]) + inp[1]
-        total_rx_sales = (base_rx_vol * unit_price) + (hmo_vol * inp[35])
+        
+        # Revenue Breakdown (For Reports)
+        rev_rx_normal = base_rx_vol * unit_price
+        rev_rx_hmo = hmo_vol * inp[35]
+        total_rx_sales = rev_rx_normal + rev_rx_hmo
+        total_sales = total_rx_sales + total_otc_sales
         
         # COGS & Stockout
         cogs_rx_total = total_rx_vol * BASE_COST_RX
         cogs_otc_total = total_otc_sales / (1 + inp[13]/100)
         
-        # Stockout Logic (Rx)
         req_inv_rx = cogs_rx_total * (1 + RX_PURCH_INDEX)
         avail_inv_rx = fin['inventory_rx'] + inp[14]
         emer_purch_rx = max(0, req_inv_rx - avail_inv_rx)
         
-        # Stockout Logic (OTC)
         req_inv_otc = cogs_otc_total * (1 + OTC_PURCH_INDEX)
         avail_inv_otc = fin['inventory_otc'] + inp[15]
         emer_purch_otc = max(0, req_inv_otc - avail_inv_otc)
         
         # Slippage
         mgr_control_factor = 1.0 + (inp[21]/100.0)
-        actual_slippage = (total_rx_sales + total_otc_sales) * SLIPPAGE_RATE * mgr_control_factor
+        actual_slippage = total_sales * SLIPPAGE_RATE * mgr_control_factor
         cogs_rx_total += (actual_slippage * 0.5)
         cogs_otc_total += (actual_slippage * 0.5)
 
-        # Overtime (Simple RPh)
+        # OT
         std_rate = 10.0 if inp[4] else 12.5
         capacity_rx = (p['eff_rph'] * 40 * WEEKS_PER_PERIOD) * std_rate
         rph_ot_hours = max(0, (total_rx_vol - capacity_rx) / std_rate)
         
-        # =========================================================================
-        # PHASE 4: FINANCIALS
-        # =========================================================================
-        # Expenses
+        # --- PHASE 4: FINANCIALS ---
+        # Expenses Breakdown
         wage_rph = (p['eff_rph'] * 40 * WEEKS_PER_PERIOD * inp[18]) + (rph_ot_hours * inp[18] * 1.5)
         wage_clk = (p['eff_clk'] * 40 * WEEKS_PER_PERIOD * inp[20])
         total_wages = wage_rph + wage_clk
         ben_cost = total_wages * (BENEFIT_PCT + (0.05 if inp[32] else 0) + (0.10 if inp[33] else 0))
         
-        rent = (total_rx_sales + total_otc_sales) * FIXED_RENT_RATE.get(p['location_code'], 0.03)
-        bad_debt = ((total_rx_sales + total_otc_sales) * 0.01) + inp[29] # Simplified 1% bad debt + writeoff
+        rent = total_sales * FIXED_RENT_RATE.get(p['location_code'], 0.03)
+        bad_debt = (total_sales * 0.01) + inp[29]
+        utilities = 3000 * (1 + INFLATION)
+        promo = inp[7]
+        mgr_salary = inp[20] * 3
+        mortgage = inp[23]
         
-        total_opex = total_wages + ben_cost + rent + inp[7] + (inp[20]*3) + bad_debt + inp[23] + 3000
+        total_opex = total_wages + ben_cost + rent + utilities + promo + mgr_salary + bad_debt + mortgage
         
-        gm = (total_rx_sales + total_otc_sales) - (cogs_rx_total + cogs_otc_total)
+        gm = total_sales - (cogs_rx_total + cogs_otc_total)
         intr_exp = (fin['long_term_debt'] + fin['notes_payable']) * INT_RATE_LOAN
         intr_inc = (fin['investments'] * CD_RATE)
         
         net_profit = gm - total_opex - intr_exp + intr_inc
         
-        # Cash Flow
+        # Cash Flow (Direct Method)
         cash_start = fin['cash']
-        inflow = total_rx_sales + total_otc_sales + intr_inc + inp[30] # Simplified Sales=Cash for now to fix lag complexity
-        outflow = inp[28] + emer_purch_rx + emer_purch_otc + total_opex + intr_exp
-        fin['cash'] = cash_start + inflow - outflow
+        # Inflow
+        inflow_sales = (total_sales * 0.8) # Approx Cash Sales
+        inflow_ar = fin['acct_receivable'] * (1 - LAG_AR)
+        inflow_debt_recovered = inp[30]
+        inflow_interest = intr_inc
+        total_cash_in = inflow_sales + inflow_ar + inflow_debt_recovered + inflow_interest
+        
+        # Outflow
+        outflow_ap = inp[28]
+        outflow_wages = total_wages + ben_cost + mgr_salary
+        outflow_rent = rent
+        outflow_promo = promo
+        outflow_util = utilities
+        outflow_purch = emer_purch_rx + emer_purch_otc
+        outflow_mortgage = mortgage
+        total_cash_out = outflow_ap + outflow_wages + outflow_rent + outflow_promo + outflow_util + outflow_purch + outflow_mortgage + intr_exp
+        
+        fin['cash'] = cash_start + total_cash_in - total_cash_out
         
         # Emergency Loan
         e_loan = 0
@@ -359,10 +360,13 @@ def calculate_results():
             fin['notes_payable'] += e_loan
             fin['cash'] += e_loan
 
-        # Balance Sheet Update
+        # BS Update
         fin['inventory_rx'] = (fin['inventory_rx'] + inp[14] + emer_purch_rx) - cogs_rx_total
         fin['inventory_otc'] = (fin['inventory_otc'] + inp[15] + emer_purch_otc) - cogs_otc_total
         fin['acct_payable'] = (fin['acct_payable'] - inp[28]) + inp[14] + inp[15]
+        
+        new_ar = total_sales * 0.2
+        fin['acct_receivable'] = (fin['acct_receivable'] * LAG_AR) + new_ar
         fin['retained_earnings'] += net_profit
         
         # History
@@ -373,15 +377,36 @@ def calculate_results():
             'rx_per_hr': total_rx_vol / (p['eff_rph']*40*WEEKS_PER_PERIOD) if p['eff_rph'] else 0
         })
         
+        # --- SAVE DETAILED METRICS FOR NEW UI ---
         metrics = {
-            "TOT SALES": total_rx_sales + total_otc_sales,
-            "Rx SALES": total_rx_sales,
-            "OTC SALES": total_otc_sales,
-            "Net Profit": net_profit,
-            "Cash Flow": fin['cash'] - cash_start,
+            # Income Statement
+            "rev_rx": total_rx_sales, "rev_otc": total_otc_sales, "total_rev": total_sales,
+            "cogs_rx": cogs_rx_total, "cogs_otc": cogs_otc_total, "total_cogs": cogs_rx_total + cogs_otc_total,
+            "gross_margin": gm,
+            "exp_wages": total_wages, "exp_ben": ben_cost, "exp_mgr": mgr_salary,
+            "exp_rent": rent, "exp_util": utilities, "exp_promo": promo,
+            "exp_bad_debt": bad_debt, "exp_mortgage": mortgage,
+            "exp_interest": intr_exp, "inc_interest": intr_inc,
+            "net_profit": net_profit,
+            
+            # Balance Sheet
+            "bs_cash": fin['cash'], "bs_ar": fin['acct_receivable'] + fin['acct_receivable_3rd'],
+            "bs_inv_rx": fin['inventory_rx'], "bs_inv_otc": fin['inventory_otc'],
+            "bs_invest": fin['investments'], "bs_fixed": fin['fixed_assets'],
+            "bs_ap": fin['acct_payable'], "bs_notes": fin['notes_payable'], 
+            "bs_lt_debt": fin['long_term_debt'], "bs_equity": fin['retained_earnings'],
+            
+            # Cash Flow
+            "cf_start": cash_start, "cf_in": total_cash_in, "cf_out": total_cash_out,
+            "cf_eloan": e_loan, "cf_end": fin['cash'],
+            
+            # KPIs
+            "kpi_gm_pct": (gm/total_sales*100) if total_sales else 0,
+            "kpi_payroll_pct": ((total_wages+ben_cost+mgr_salary)/total_sales*100) if total_sales else 0,
+            "kpi_rent_pct": (rent/total_sales*100) if total_sales else 0,
+            "kpi_np_pct": (net_profit/total_sales*100) if total_sales else 0,
+            
             "Rx Mkt Sh": my_rx_share * 100,
-            "OTC Mkt Sh": my_otc_share * 100,
-            "Emerg Loan": e_loan,
             "LOCATION": LOC_MAP[p['location_code']]
         }
         p['history'].append(metrics)
@@ -390,129 +415,109 @@ def calculate_results():
     st.session_state.global_period += 1
 
 # ==========================================
-# 4. UI COMPONENTS (Standard)
+# 4. UI COMPONENTS (UPDATED WITH TABS)
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V32")
-    st.caption("Enhanced Logic Engine")
+    st.title("💊 Communi-Pharm V35")
+    st.caption("Hybrid Edition")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def render_instructor_ui():
     st.header("👨‍🏫 Instructor Dashboard")
-    state = st.session_state.game_state
+    # Setup Logic
+    if st.session_state.game_state.startswith("SETUP"):
+        if st.session_state.game_state == "SETUP_STEP_1":
+            n = st.number_input("Teams", 1, 20, 5)
+            if st.button("Next"): initialize_teams(n); st.session_state.game_state="SETUP_STEP_2"; st.rerun()
+        elif st.session_state.game_state == "SETUP_STEP_2":
+            st.write("Weights Configured."); 
+            if st.button("Start"): st.session_state.game_state="ACTIVE"; st.rerun()
     
-    # SETUP PHASE
-    if state == "SETUP_STEP_1":
-        st.markdown('<div class="step-header">Step 1: Teams</div>', unsafe_allow_html=True)
-        n = st.number_input("Number of Teams", 1, 20, 5)
-        if st.button("Next ➡️"): initialize_teams(n); st.session_state.game_state="SETUP_STEP_2"; st.rerun()
-    elif state == "SETUP_STEP_2":
-        st.markdown('<div class="step-header">Step 2: Weights</div>', unsafe_allow_html=True)
-        t1, t2 = st.tabs(["Rx Weights", "OTC Weights"])
-        with t1: st.session_state.rx_weights_df = st.data_editor(st.session_state.rx_weights_df)
-        with t2: st.session_state.otc_weights_df = st.data_editor(st.session_state.otc_weights_df)
-        if st.button("Next ➡️"): st.session_state.game_state="SETUP_STEP_3"; st.rerun()
-    elif state == "SETUP_STEP_3":
-        st.markdown('<div class="step-header">Step 3: Initial Environment</div>', unsafe_allow_html=True)
-        df_mkt = pd.DataFrame({"Variable": MARKET_LABELS, "Value": st.session_state.market_data_list})
-        edited_df = st.data_editor(df_mkt, height=400, use_container_width=True)
-        if st.button("🏁 START GAME", type="primary"): 
-            st.session_state.market_data_list = edited_df['Value'].tolist()
-            st.session_state.game_state="ACTIVE"
-            st.rerun()
-
-    # ACTIVE PHASE
-    elif state == "ACTIVE":
-        st.success(f"### Results for Period {st.session_state.global_period - 1}")
-        
-        # --- FULL REPORT TABLE ---
+    # Active Logic
+    elif st.session_state.game_state == "ACTIVE":
+        st.success(f"Period {st.session_state.global_period - 1} Results")
         if any(p['history'] for p in st.session_state.players.values()):
-            report_data = {}
-            first_active = next((p for p in st.session_state.players.values() if p['history']), None)
-            
-            if first_active:
-                metrics_order = list(first_active['history'][-1].keys())
-                for tid, p in st.session_state.players.items():
-                    if p['history']:
-                        last_metrics = p['history'][-1]
-                        report_data[p['shop_name']] = [last_metrics.get(m, 0) for m in metrics_order]
-                
-                df_rep = pd.DataFrame(report_data, index=metrics_order)
-                st.dataframe(df_rep, height=800, use_container_width=True)
+            data = []
+            for p in st.session_state.players.values():
+                if p['history']:
+                    last = p['history'][-1]
+                    data.append({
+                        "Team": p['shop_name'],
+                        "Net Profit": f"${last['net_profit']:,.0f}",
+                        "Cash": f"${last['bs_cash']:,.0f}",
+                        "Mkt Share": f"{last['Rx Mkt Sh']:.1f}%"
+                    })
+            st.dataframe(pd.DataFrame(data))
         
-        st.divider()
-        c1, c2 = st.columns([3, 2])
-        ready_count = sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')
-        c1.metric("Students Submitted", f"{ready_count}/{len(st.session_state.players)}")
-        
-        if c2.button("⚙️ Setup Next Period", type="primary"):
-            st.session_state.game_state = "MARKET_EDIT_RUN"
-            st.rerun()
-
-    elif state == "MARKET_EDIT_RUN":
-        st.markdown(f'<div class="step-header">🚨 Market Environment: Period {st.session_state.global_period}</div>', unsafe_allow_html=True)
-        df_mkt = pd.DataFrame({"Variable": MARKET_LABELS, "Value": st.session_state.market_data_list})
-        edited_df = st.data_editor(df_mkt, height=500, use_container_width=True)
-        if st.button("🧮 RUN PERIOD", type="primary"): 
-            st.session_state.market_data_list = edited_df['Value'].tolist()
-            calculate_results()
-            st.session_state.game_state="ACTIVE"
-            st.rerun()
+        if st.button("Run Next Period"): calculate_results(); st.rerun()
 
 def render_student_ui():
     if st.session_state.game_state not in ["ACTIVE", "MARKET_EDIT_RUN"]: 
-        st.warning("⏳ Waiting for Instructor to start game..."); return
+        st.warning("⏳ Waiting for Instructor..."); return
     
     t_ids = list(st.session_state.players.keys())
-    sel_id = st.selectbox("Select Your Team", t_ids, format_func=lambda x: st.session_state.players[x]['shop_name'])
+    sel_id = st.selectbox("Select Team", t_ids, format_func=lambda x: st.session_state.players[x]['shop_name'])
     p = st.session_state.players[sel_id]
     
     # 1. SETUP
     if p['period'] == 1 and p['status'] == 'Pending' and not p['history']:
         st.info("👋 Welcome! Please set up your store.")
-        c1, c2 = st.columns(2)
-        n = c1.text_input("Store Name", p['shop_name'])
-        l = c2.selectbox("Location", [0,1,2,3], format_func=lambda x: LOC_MAP[x])
-        if st.button("Start Operations") and l!=0: 
+        n = st.text_input("Store Name", p['shop_name'])
+        l = st.selectbox("Location", [0,1,2,3], format_func=lambda x: LOC_MAP[x])
+        if st.button("Start") and l!=0: 
             p['shop_name']=n; p['location_code']=l; p['status']='Thinking'; st.rerun()
         return
 
-    # 2. OPERATIONS
-    st.markdown(f"### 🏥 {p['shop_name']}")
-    st.caption(f"Location: {LOC_MAP[p['location_code']]} | Period: {p['period']}")
+    st.markdown(f"### 🏥 {p['shop_name']} (Period {p['period']})")
     
-    tab1, tab2 = st.tabs(["📋 Decisions", "📊 Previous Results"])
+    tab1, tab2 = st.tabs(["📝 Decisions", "📊 Financial Reports"])
     
     with tab1:
         if p['status'] == 'Submitted':
-            st.success("✅ Decisions Submitted. Waiting for Instructor.")
-            if st.button("Edit Decisions"): p['status']='Thinking'; st.rerun()
+            st.success("Decisions Submitted.")
+            if st.button("Edit"): p['status']='Thinking'; st.rerun()
         else:
-            st.write("Edit your inputs for this period:")
             df = pd.DataFrame({"Label": INPUT_LABELS, "Value": p['inputs']})
             ed = st.data_editor(df, hide_index=True, height=500)
-            if st.button("Submit Decisions", type="primary"):
-                p['inputs'] = ed['Value'].tolist()
-                p['status'] = 'Submitted'
-                st.rerun()
+            if st.button("Submit", type="primary"):
+                p['inputs'] = ed['Value'].tolist(); p['status'] = 'Submitted'; st.rerun()
                 
     with tab2:
-        if p['history']:
-            last = p['history'][-1]
-            st.write(f"**Results from Period {p['period']-1}**")
-            # Highlight Key KPIs
-            kpis = ["Net Profit", "Cash Flow", "Rx SALES", "Emerg Loan"]
-            cols = st.columns(len(kpis))
-            for i, m in enumerate(kpis):
-                val = last.get(m, 0)
-                cols[i].metric(m, f"${val:,.0f}")
-            st.json(last)
-        else:
-            st.info("No results yet. Submit decisions for Period 1.")
+        if not p['history']: st.info("No reports yet."); return
+        last = p['history'][-1]
+        
+        t1, t2, t3, t4 = st.tabs(["Income Statement", "Balance Sheet", "Cash Flow", "Lilly Benchmark"])
+        
+        with t1:
+            st.markdown(f"""
+            | Item | Amount |
+            |---|---|
+            | **Total Revenue** | **${last['total_rev']:,.0f}** |
+            | Cost of Goods Sold | (${last['total_cogs']:,.0f}) |
+            | **Gross Margin** | **${last['gross_margin']:,.0f}** |
+            | Expenses (Wages, Rent, etc) | (${last['exp_wages'] + last['exp_rent'] + last['exp_promo'] + last['exp_util'] + last['exp_mgr'] + last['exp_bad_debt'] + last['exp_ben']:,.0f}) |
+            | Interest | (${last['exp_interest'] - last['inc_interest']:,.0f}) |
+            | **NET PROFIT** | **${last['net_profit']:,.0f}** |
+            """)
+            
+        with t2:
+            st.markdown(f"""
+            **Assets**: Cash ${last['bs_cash']:,.0f} | Inventory ${last['bs_inv_rx'] + last['bs_inv_otc']:,.0f} | Fixed ${last['bs_fixed']:,.0f}
+            **Liabilities**: A/P ${last['bs_ap']:,.0f} | Loans ${last['bs_lt_debt'] + last['bs_notes']:,.0f}
+            **Equity**: ${last['bs_equity']:,.0f}
+            """)
+            
+        with t3:
+            st.markdown(f"Start Cash: ${last['cf_start']:,.0f} -> End Cash: ${last['cf_end']:,.0f} (Change: ${last['cf_end'] - last['cf_start']:,.0f})")
+            
+        with t4:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Gross Margin", f"{last['kpi_gm_pct']:.1f}%", f"{last['kpi_gm_pct'] - LILLY_BENCHMARKS['Gross Margin %']:.1f}%")
+            c2.metric("Net Profit", f"{last['kpi_np_pct']:.1f}%", f"{last['kpi_np_pct'] - LILLY_BENCHMARKS['Net Profit %']:.1f}%")
+            c3.metric("Payroll", f"{last['kpi_payroll_pct']:.1f}%", f"{last['kpi_payroll_pct'] - LILLY_BENCHMARKS['Payroll Expenses %']:.1f}%", delta_color="inverse")
 
 # ROUTER
-role = st.sidebar.selectbox("User Role", ["Student", "Instructor"])
+role = st.sidebar.selectbox("Role", ["Student", "Instructor"])
 if role == "Instructor":
-    if st.sidebar.text_input("Password", type="password") == ADMIN_PASSWORD: render_instructor_ui()
+    if st.sidebar.text_input("Pwd", type="password") == ADMIN_PASSWORD: render_instructor_ui()
 else: render_student_ui()
-
