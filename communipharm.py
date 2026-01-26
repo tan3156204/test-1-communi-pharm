@@ -421,7 +421,52 @@ with st.sidebar:
     st.title("💊 Communi-Pharm V35")
     st.caption("Hybrid Edition")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
+# --- SCENARIO PARSER FUNCTION ---
+# นำไปวางไว้ก่อนฟังก์ชัน render_instructor_ui หรือ initialize_teams
 
+def parse_scenario_file(file_content):
+    """Parses HISTC1.P1 raw content into structured store data"""
+    try:
+        # Clean and split into float tokens
+        raw_data = file_content.replace('\n', ' ').replace('\r', ' ')
+        tokens = [float(x) for x in raw_data.split() if x.replace('.', '', 1).replace('-', '', 1).replace('E', '', 1).isdigit()]
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+        return []
+
+    stores_data = []
+    i = 0
+    # Pattern scanning: Look for [Price 10-40] [0] [Cash] ... [Location@8]
+    while i < len(tokens) - 20:
+        # Heuristic: Price is usually 10-40, next is 0, index+8 is loc (1,2,3)
+        price_chk = (10 < tokens[i] < 40)
+        zero_chk = (tokens[i+1] == 0)
+        loc_chk = (tokens[i+8] in [1, 2, 3])
+        
+        if price_chk and zero_chk and loc_chk:
+            try:
+                s = {}
+                s['prev_price'] = tokens[i]     # Index 0
+                s['cash']       = tokens[i+2]   # Index 2
+                s['inv_rx']     = tokens[i+3]   # Index 3
+                s['inv_otc']    = tokens[i+4]   # Index 4
+                s['notes_pay']  = tokens[i+5]   # Index 5 (Liability)
+                s['fix_asset']  = tokens[i+6]   # Index 6
+                s['loc_code']   = int(tokens[i+8]) # Index 8
+                s['ap']         = tokens[i+9]   # Index 9
+                s['lt_debt']    = tokens[i+10]  # Index 10
+                s['retained']   = tokens[i+11]  # Index 11
+                s['ar']         = tokens[i+12]  # Index 12
+                # Note: Prev share is further down, approx index 16
+                s['prev_share'] = tokens[i+16] * 100 if (i+16) < len(tokens) else 15.0
+                
+                stores_data.append(s)
+                i += 50 # Skip ahead to find next block
+            except IndexError:
+                break
+        else:
+            i += 1
+    return stores_data
 def render_instructor_ui():
     st.header("👨‍🏫 Instructor Dashboard")
     
@@ -581,4 +626,5 @@ role = st.sidebar.selectbox("Role", ["Student", "Instructor"])
 if role == "Instructor":
     if st.sidebar.text_input("Pwd", type="password") == ADMIN_PASSWORD: render_instructor_ui()
 else: render_student_ui()
+
 
