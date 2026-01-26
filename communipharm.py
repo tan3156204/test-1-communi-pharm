@@ -13,7 +13,7 @@ st.markdown("""
     .block-container { padding-top: 1rem; }
     .step-header { background-color: #e3f2fd; padding: 15px; border-radius: 10px; border-left: 5px solid #2196f3; margin-bottom: 20px; }
     .report-table { font-family: 'Courier New', monospace; font-size: 0.9em; }
-    .metric-header { font-weight: bold; background-color: #f0f2f6; }
+    .metric-header { font-weight: bold; backgroud-color: #f0f2f6; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -424,18 +424,47 @@ with st.sidebar:
 
 def render_instructor_ui():
     st.header("👨‍🏫 Instructor Dashboard")
-    # Setup Logic
+    
+    # --- 1. SETUP PHASE (เหมือนเดิม) ---
     if st.session_state.game_state.startswith("SETUP"):
         if st.session_state.game_state == "SETUP_STEP_1":
-            n = st.number_input("Teams", 1, 20, 5)
-            if st.button("Next"): initialize_teams(n); st.session_state.game_state="SETUP_STEP_2"; st.rerun()
+            st.markdown("### Step 1: Initialize Teams")
+            
+            # Option A: Manual
+            with st.expander("Manual Setup"):
+                n = st.number_input("Number of Teams", 1, 20, 5)
+                if st.button("Create Teams"): 
+                    initialize_teams_manual(n)
+                    st.session_state.game_state="SETUP_STEP_2"
+                    st.rerun()
+
+            # Option B: Upload Scenario
+            with st.expander("Load Scenario File", expanded=True):
+                uploaded_file = st.file_uploader("Upload HISTC1.P1", type=None)
+                if st.button("Load & Create"):
+                    if uploaded_file:
+                        content = uploaded_file.getvalue().decode("utf-8")
+                        scenarios = parse_scenario_file(content)
+                        if scenarios:
+                            initialize_teams_from_scenario(scenarios)
+                            st.success(f"Loaded {len(scenarios)} stores.")
+                            st.session_state.game_state="SETUP_STEP_2"
+                            st.rerun()
+                    else:
+                        st.error("Please upload a file.")
+
         elif st.session_state.game_state == "SETUP_STEP_2":
-            st.write("Weights Configured."); 
-            if st.button("Start"): st.session_state.game_state="ACTIVE"; st.rerun()
+            st.markdown("### Step 2: Check Configuration")
+            st.write("Weights & Settings Ready.")
+            if st.button("Start Game"): 
+                st.session_state.game_state="ACTIVE"
+                st.rerun()
     
-    # Active Logic
+    # --- 2. ACTIVE PHASE (ดูผลรอบปัจจุบัน) ---
     elif st.session_state.game_state == "ACTIVE":
-        st.success(f"Period {st.session_state.global_period - 1} Results")
+        st.success(f"### 🏁 Period {st.session_state.global_period - 1} Results")
+        
+        # Show Dashboard Table
         if any(p['history'] for p in st.session_state.players.values()):
             data = []
             for p in st.session_state.players.values():
@@ -447,9 +476,40 @@ def render_instructor_ui():
                         "Cash": f"${last['bs_cash']:,.0f}",
                         "Mkt Share": f"{last['Rx Mkt Sh']:.1f}%"
                     })
-            st.dataframe(pd.DataFrame(data))
+            st.dataframe(pd.DataFrame(data), use_container_width=True)
         
-        if st.button("Run Next Period"): calculate_results(); st.rerun()
+        st.divider()
+        col1, col2 = st.columns([3, 1])
+        ready_count = sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')
+        col1.metric("Students Ready", f"{ready_count}/{len(st.session_state.players)}")
+        
+        # ปุ่มนี้จะพาไปหน้าแก้ไข Environment แทนที่จะรันเลย
+        if col2.button("⚙️ Setup Next Period", type="primary"):
+            st.session_state.game_state = "MARKET_EDIT_RUN"
+            st.rerun()
+
+    # --- 3. MARKET EDIT PHASE (ส่วนที่หายไป ผมนำกลับมาแล้วครับ) ---
+    elif st.session_state.game_state == "MARKET_EDIT_RUN":
+        st.markdown(f"### 🚨 Market Environment: Period {st.session_state.global_period}")
+        st.info("Instructor can modify market variables before running the simulation.")
+        
+        # สร้าง Data Editor สำหรับแก้ไขตัวแปรตลาด
+        df_mkt = pd.DataFrame({"Variable": MARKET_LABELS, "Value": st.session_state.market_data_list})
+        edited_df = st.data_editor(df_mkt, height=600, use_container_width=True)
+        
+        col1, col2 = st.columns(2)
+        if col1.button("🔙 Back"):
+            st.session_state.game_state = "ACTIVE"
+            st.rerun()
+            
+        if col2.button("🧮 RUN SIMULATION", type="primary"):
+            # บันทึกค่าที่แก้กลับเข้า Session
+            st.session_state.market_data_list = edited_df['Value'].tolist()
+            # คำนวณผลลัพธ์
+            calculate_results()
+            # กลับไปหน้า Active
+            st.session_state.game_state = "ACTIVE"
+            st.rerun()
 
 def render_student_ui():
     if st.session_state.game_state not in ["ACTIVE", "MARKET_EDIT_RUN"]: 
@@ -521,3 +581,4 @@ role = st.sidebar.selectbox("Role", ["Student", "Instructor"])
 if role == "Instructor":
     if st.sidebar.text_input("Pwd", type="password") == ADMIN_PASSWORD: render_instructor_ui()
 else: render_student_ui()
+
