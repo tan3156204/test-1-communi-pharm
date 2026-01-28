@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -6,7 +7,7 @@ import math
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V36.21 (Env Fix)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V36.22 (Stable)", layout="wide")
 
 st.markdown("""
 <style>
@@ -48,6 +49,7 @@ MARKET_LABELS = [
     "27. Maximum Price for Rx’s ($)", "28. SS & WC as % of Salary & Wages (%)"
 ]
 
+# --- WEIGHT CONFIGURATION ---
 RX_DEFAULT = {
     "Factor": ["PastPrice", "Price", "Promo", "Hours", "Delivery", "Records", "Credit", "Inventory", "MktShare", "Efficiency"],
     "Medical Center":    [5, 20, 11, 7, 10, 15, 3, 10, 15, 6], 
@@ -61,6 +63,7 @@ OTC_DEFAULT = {
     "Shopping Center":   [20, 20, 10, 15, 20, 15]    
 }
 
+# --- REPORT ORDER (Exact Match) ---
 REPORT_ORDER = [
     "TOT SALES", "Rx SALES", "OTH SALES", "Avg Rx Pr", "Rx Ing $", 
     "Rx GM%", "3-Pty GM%", "Tot #Rx's", "3-Pty #Rx", "Copay Dis", 
@@ -92,7 +95,7 @@ if 'rx_weights_df' not in st.session_state: st.session_state.rx_weights_df = pd.
 if 'otc_weights_df' not in st.session_state: st.session_state.otc_weights_df = pd.DataFrame(OTC_DEFAULT)
 
 # ==========================================
-# 3. INITIALIZATION & DATA
+# 3. INITIALIZATION
 # ==========================================
 def get_static_scenario_data():
     """Exact data from Hisc1p1.xlsx"""
@@ -128,7 +131,6 @@ def initialize_hardcoded_scenario():
             'acct_payable': s['ap'], 'notes_payable': s['notes_pay'], 'long_term_debt': s['mortgage'], 
             'retained_earnings': equity
         }
-        
         prev_stats = { 
             'avg_price': s['prev_price'], 'mkt_share': s['prev_share'], 
             'rx_per_hr': 6.0, 'otc_markup': 45.0, 'ad_index': 1.0
@@ -198,17 +200,26 @@ def calculate_results():
         return (num_stores + 1) - series.rank(method='min', ascending=ascending)
 
     if not df_comp.empty:
-        cols = ['Price', 'PastPrice', 'Promo', 'Hours', 'Delivery', 'Records', 'Credit', 'Inventory', 'Share', 'Eff']
-        asc = [True, True, False, False, False, False, False, False, False, False]
-        for c, a in zip(cols, asc):
-            target = 'prev_share' if c == 'Share' else c.lower().replace('eff', 'efficiency').replace('pastprice', 'pastprice')
-            df_comp[f'R_{c}'] = get_points(df_comp[target], a)
+        # [FIX] Manually map columns to match RX_DEFAULT keys EXACTLY
+        rx_key_map = {
+            'Price': 'price', 'PastPrice': 'pastprice', 'Promo': 'promo', 
+            'Hours': 'hours', 'Delivery': 'delivery', 'Records': 'records', 
+            'Credit': 'credit', 'Inventory': 'inventory', 'MktShare': 'prev_share', 
+            'Efficiency': 'efficiency'
+        }
+        rx_asc_map = {'Price': True, 'PastPrice': True} # Default is False (Higher is Better)
 
-        df_comp['RO_Markup'] = get_points(df_comp['otc_markup'], True)
+        for key, col_name in rx_key_map.items():
+            asc = rx_asc_map.get(key, False)
+            df_comp[f'R_{key}'] = get_points(df_comp[col_name], asc)
+
+        # OTC Ranking
+        df_comp['RO_PresMarkup'] = get_points(df_comp['otc_markup'], True)
         df_comp['RO_PrevMarkup'] = get_points(df_comp['prev_otc_markup'], True)
-        df_comp['RO_Promo'] = df_comp['R_Promo']; df_comp['RO_Hours'] = df_comp['R_Hours']
+        df_comp['RO_AdIndex'] = df_comp['R_Promo']
+        df_comp['RO_Hours'] = df_comp['R_Hours']
         df_comp['RO_Inventory'] = get_points(df_comp['inv_otc'], False)
-        df_comp['RO_RxShare'] = df_comp['R_Share']
+        df_comp['RO_RxShare'] = df_comp['R_MktShare']
 
     rx_scores = {}; otc_scores = {}
     total_rx_score = 0; total_otc_score = 0
@@ -216,8 +227,11 @@ def calculate_results():
 
     for idx, row in df_comp.iterrows():
         tid = row['id']; loc_name = LOC_MAP[row['loc']]
+        
+        # [FIX] Use exact keys matching RX_DEFAULT
         w_rx = rx_w_df.set_index("Factor")[loc_name]
         score_rx = sum([row[f'R_{c}'] * w_rx[c] for c in ['Price','PastPrice','Promo','Hours','Delivery','Records','Credit','Inventory','MktShare','Efficiency']])
+        
         if row['price'] < avg_mkt_price * 0.95: score_rx *= 1.15
         if row['price'] > avg_mkt_price * 1.05: score_rx *= 0.85
         rx_scores[tid] = score_rx; total_rx_score += score_rx
@@ -359,8 +373,8 @@ def calculate_results():
 # 5. UI COMPONENTS
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V36.21")
-    st.caption("Full Report + Env Fix")
+    st.title("💊 Communi-Pharm V36.22")
+    st.caption("Full Report + Logic Fix")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def generate_master_report(players):
@@ -397,7 +411,6 @@ def render_instructor_ui():
         c1, c2 = st.columns([3,1])
         c1.metric("Status", f"{sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')}/{len(st.session_state.players)} Teams Ready")
         
-        # [RESTORED BUTTON]
         if c2.button("⚙️ Setup Next Period", type="primary"):
             st.session_state.game_state = "MARKET_EDIT_RUN"
             st.rerun()
