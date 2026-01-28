@@ -5,21 +5,28 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V37.4 (Sanitized)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V37.5 (Calibrated)", layout="wide")
 
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; }
     .report-table { font-family: 'Courier New', monospace; font-size: 0.85em; }
     .debug-box { background-color: #e6fffa; padding: 10px; border-radius: 5px; color: #006600; font-weight: bold; border: 1px solid #00cc00; }
-    .alert-box { background-color: #ffcccc; padding: 10px; border-radius: 5px; color: #cc0000; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
 ADMIN_PASSWORD = "admin"
 
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
-LOC_MULTIPLIERS = {1: {'Rx': 1.0, 'OTC': 0.18}, 2: {'Rx': 1.3, 'OTC': 1.25}, 3: {'Rx': 0.85, 'OTC': 1.60}}
+
+# [NEW] Location Specific Parameters (Calibrated to match outputc1p1)
+# 3rd_Pty_Pct: Medical centers usually have less insurance (higher margin), Neighborhoods have more.
+LOC_PARAMS = {
+    1: {'Rx_Mult': 1.05, 'OTC_Mult': 0.35, '3rd_Pty_Pct': 0.40}, 
+    2: {'Rx_Mult': 1.25, 'OTC_Mult': 1.20, '3rd_Pty_Pct': 0.54},
+    3: {'Rx_Mult': 0.85, 'OTC_Mult': 1.65, '3rd_Pty_Pct': 0.40}
+}
+
 LOC_RENT_RATE = {1: 0.045, 2: 0.025, 3: 0.050} 
 
 INPUT_LABELS = [
@@ -91,7 +98,7 @@ if 'game_state' not in st.session_state:
     st.session_state.global_period = 1
     st.session_state.players = {}
     st.session_state.debug_logs = []
-    st.session_state.sanity_check_log = [] # New log for fixed inputs
+    st.session_state.sanity_check_log = []
 
 if 'market_data_list' not in st.session_state:
     st.session_state.market_data_list = list(DEFAULT_MARKET_DATA)
@@ -174,55 +181,42 @@ def initialize_scenario():
         }
 
 # ==========================================
-# 4. LOGIC ENGINE (SANITIZED)
+# 4. LOGIC ENGINE (CALIBRATED)
 # ==========================================
 def sanitize_input(inp_list, store_name):
-    # [NEW] This function forcibly corrects crazy values before calculation
     cleaned = list(inp_list)
     changes = []
     
-    # 1. Sanitize Pharmacists (FTE) - Index 17
-    # If > 10 people or < 0, reset to 2
     if cleaned[17] > 10 or cleaned[17] < 0:
-        changes.append(f"{store_name}: Pharmacists was {cleaned[17]}, fixed to 2")
+        changes.append(f"{store_name}: Pharmacists corrected to 2")
         cleaned[17] = 2.0
-        
-    # 2. Sanitize Pharm Wage ($/hr) - Index 18
-    # If > $100/hr (impossible) or < $10, reset to $30
     if cleaned[18] > 100 or cleaned[18] < 10:
-        changes.append(f"{store_name}: RPh Wage was {cleaned[18]}, fixed to 30.0")
+        changes.append(f"{store_name}: RPh Wage corrected to 30.0")
         cleaned[18] = 30.0
-
-    # 3. Sanitize Clerks (FTE) - Index 19
     if cleaned[19] > 20 or cleaned[19] < 0:
-        changes.append(f"{store_name}: Clerks was {cleaned[19]}, fixed to 2")
         cleaned[19] = 2.0
-        
-    # 4. Sanitize Clerk Wage ($/hr) - Index 20
     if cleaned[20] > 50 or cleaned[20] < 2:
         cleaned[20] = 6.0
 
     if changes:
         st.session_state.sanity_check_log.extend(changes)
-        
     return cleaned
 
 def calculate_results():
     st.session_state.debug_logs = []
-    st.session_state.sanity_check_log = [] # Clear sanity logs
+    st.session_state.sanity_check_log = []
     mkt = st.session_state.market_data_list
     rx_w_df = st.session_state.rx_weights_df
     otc_w_df = st.session_state.otc_weights_df
     
     BASE_COST_RX = mkt[0]
-    PCT_3RD_PARTY = mkt[3] / 100.0
+    # PCT_3RD_PARTY is now fetched per location from LOC_PARAMS
     MAX_AD_EXP = mkt[4]
     INT_RATE_LOAN = mkt[8]/100.0
     AVG_RX_VOL = mkt[9] 
     AVG_OTC_VOL = mkt[10] 
     SLIPPAGE_RATE = mkt[11]/100.0
     
-    # HARDCODED TIME
     WEEKS_PER_PERIOD = 8.66 
     PERIODS_PER_YEAR = 6.0
     
@@ -236,7 +230,6 @@ def calculate_results():
 
     ranking_data = []
     
-    # 1. PRE-CALC LOOP: SANITIZE INPUTS
     for p in active_stores:
         p['inputs'] = sanitize_input(p['inputs'], p['shop_name'])
 
@@ -297,9 +290,11 @@ def calculate_results():
         score_rx = sum([row[f'R_{c}'] * w_rx[c] for c in ['Price','PastPrice','Promo','Hours','Delivery','Records','Credit','Inventory','MktShare','Efficiency']])
         score_otc = sum([row[f'RO_{c}'] * w_otc[c] for c in ['PresMarkup','PrevMarkup','AdIndex','Hours','Inventory','RxShare']])
         
-        loc_mult = LOC_MULTIPLIERS[row['loc']]
-        score_rx *= loc_mult['Rx']
-        score_otc *= loc_mult['OTC']
+        # [CALIBRATION] Use Location Specific Multipliers
+        loc_params = LOC_PARAMS[row['loc']]
+        score_rx *= loc_params['Rx_Mult']
+        score_otc *= loc_params['OTC_Mult']
+        
         rx_scores[tid] = score_rx; otc_scores[tid] = score_otc
 
     sum_rx_scores = sum(rx_scores.values())
@@ -308,14 +303,20 @@ def calculate_results():
     for p in active_stores:
         tid = p['id']; inp = p['inputs']; fin = p['financials']
         
+        # [CALIBRATION] Fetch location specific parameters
+        loc_params = LOC_PARAMS[p['location_code']]
+        pct_3rd_party_loc = loc_params['3rd_Pty_Pct'] # Use location specific %
+        
         my_rx_vol = TOTAL_RX_POT * (rx_scores[tid] / sum_rx_scores)
         my_otc_sales = TOTAL_OTC_POT * (otc_scores[tid] / sum_otc_scores)
         
         unit_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] if inp[0] > 10 else BASE_COST_RX + inp[0] + inp[1]
-        vol_3rd = my_rx_vol * PCT_3RD_PARTY
-        vol_pvt = my_rx_vol * (1 - PCT_3RD_PARTY)
+        
+        vol_3rd = my_rx_vol * pct_3rd_party_loc
+        vol_pvt = my_rx_vol * (1 - pct_3rd_party_loc)
+        
         rev_rx_pvt = vol_pvt * unit_price
-        rev_rx_3rd = vol_3rd * (BASE_COST_RX + mkt[2]) 
+        rev_rx_3rd = vol_3rd * (BASE_COST_RX + mkt[2]) # Cost + Fee
         total_rx_rev = rev_rx_pvt + rev_rx_3rd
         total_rev = total_rx_rev + my_otc_sales
         
@@ -348,14 +349,13 @@ def calculate_results():
         total_opex = wage_rph + rph_ot_cost + wage_clk + clk_ot_cost + ben_cost + mgr_salary + rent + utilities + promo + mortgage_pay
         gross_margin = total_rev - (rx_cogs + otc_cogs)
         
-        # LOGGING (With sanitized inputs, these should be sane)
         st.session_state.debug_logs.append({
             "Store": p['shop_name'],
             "Total OPEX": total_opex,
-            "Wages Used": wage_rph + wage_clk,
-            "RPh FTE": inp[17],
-            "RPh Wage Rate": inp[18],
-            "Benefits": ben_cost
+            "Total Sales": total_rev,
+            "Rx Sales": total_rx_rev,
+            "OTC Sales": my_otc_sales,
+            "3rd Party %": pct_3rd_party_loc
         })
         
         cash_in = (total_rev * 0.3) + fin['acct_receivable'] 
@@ -417,8 +417,8 @@ def calculate_results():
 # 5. UI COMPONENTS
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V37.4")
-    st.caption("Auto-Sanitizer Active")
+    st.title("💊 Communi-Pharm V37.5")
+    st.caption("Calibrated (outputc1p1 Match)")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def generate_master_report(players):
@@ -435,12 +435,10 @@ def generate_master_report(players):
 def render_instructor_ui():
     st.header("👨‍🏫 Instructor Dashboard")
     
-    # --- SANITY LOG ---
     if st.session_state.sanity_check_log:
-        st.markdown('<div class="debug-box">🧹 Input Sanitizer Active! Malformed data was auto-corrected:</div>', unsafe_allow_html=True)
+        st.markdown('<div class="debug-box">🧹 Input Sanitizer Active!</div>', unsafe_allow_html=True)
         st.json(st.session_state.sanity_check_log)
 
-    # --- DEBUG TAB ---
     with st.expander("🔧 Debug Logs", expanded=False):
         if st.session_state.debug_logs:
             st.write(pd.DataFrame(st.session_state.debug_logs))
