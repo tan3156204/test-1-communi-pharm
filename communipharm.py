@@ -7,7 +7,7 @@ import re
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V36.12 (Crash Fixed)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V36.13 (CSV Fix)", layout="wide")
 
 st.markdown("""
 <style>
@@ -20,11 +20,8 @@ st.markdown("""
 
 ADMIN_PASSWORD = "admin"
 
-LILLY_BENCHMARKS = {
-    "Gross Margin %": 32.5, "Payroll Expenses %": 13.5, "Rent %": 2.8,
-    "Net Profit %": 3.5, "Inventory Turnover": 5.5, "Current Ratio": 2.5,
-    "ROA": 10.0, "ROE": 15.0
-}
+LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
+LOC_RENT_RATE = {1: 0.045, 2: 0.030, 3: 0.025}
 
 INPUT_LABELS = [
     "1. Rx Markup/Fee", "2. Rx Prof. Fee ($)", "3. Copay Discount ($)",
@@ -54,17 +51,13 @@ MARKET_LABELS = [
     "27. Maximum Price for Rx’s ($)", "28. SS & WC as % of Salary & Wages (%)"
 ]
 
-LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
-LOC_RENT_RATE = {1: 0.045, 2: 0.030, 3: 0.025}
-
-# --- WEIGHTS (V36.9 Logic) ---
+# --- WEIGHTS ---
 RX_DEFAULT = {
     "Factor": ["PastPrice", "Price", "Promo", "Hours", "Delivery", "Records", "Credit", "Inventory", "MktShare", "Efficiency"],
     "Medical Center":    [5, 20, 11, 7, 10, 15, 3, 10, 15, 6], 
     "Neighborhood":      [5, 45, 13, 11, 6, 8, 2, 11, 10, 6],  
     "Shopping Center":   [5, 20, 15, 12, 1, 1, 1, 10, 5, 10]
 }
-
 OTC_DEFAULT = {
     "Factor": ["PrevMarkup", "PresMarkup", "AdIndex", "Hours", "Inventory", "RxShare"],
     "Medical Center":    [2, 4, 4, 2, 3, 5],
@@ -94,37 +87,27 @@ if 'otc_weights_df' not in st.session_state: st.session_state.otc_weights_df = p
 # ==========================================
 # 3. HELPER FUNCTIONS (PARSERS)
 # ==========================================
-
 def restructure_financials(s):
-    """Common logic to fix Net Worth for any parser"""
-    # 1. Assets
+    """Common logic to fix Net Worth"""
     if s.get('fix_asset', 0) < 10000: 
         s['fix_asset'] = max(50000.0, s.get('lt_debt', 0) * 1.25)
-    if s.get('ar', 0) < 1000:
-        s['ar'] = 35000.0
+    if s.get('ar', 0) < 1000: s['ar'] = 35000.0
 
     total_assets = s['cash'] + s['ar'] + s['inv_rx'] + s['inv_otc'] + s['fix_asset']
     
-    # 2. Liabilities
     if s.get('notes_pay', 0) > 1000000: s['notes_pay'] = 0.0 
-    
     if s.get('ap', 0) > 1000000 or s.get('ap', 0) == 0: 
         s['ap'] = (s['inv_rx'] + s['inv_otc']) * 0.45
-        
     if s.get('lt_debt', 0) > 1000000 or s.get('lt_debt', 0) == 0:
         s['lt_debt'] = s['fix_asset'] * 0.60
 
     total_liab = s['ap'] + s['notes_pay'] + s['lt_debt']
-    
-    # 3. Equity (Force Balance)
     s['retained'] = total_assets - total_liab
-    
     return s
 
 def parse_text_scenario(file_content):
-    """Parses text/p1 files with regex cleaning"""
+    """Legacy parser for P1 text files"""
     try:
-        # Clean potential sticky numbers (e.g. 1000.00-500.00)
         cleaned_content = re.sub(r'(?<=\d)-(?=\d)', ' -', file_content)
         cleaned_content = cleaned_content.replace('\n', ' ').replace('\r', ' ')
         tokens = []
@@ -154,44 +137,94 @@ def parse_text_scenario(file_content):
     return stores_data
 
 def parse_csv_scenario(file_obj):
-    """Safely parses CSV/Excel files using pandas"""
+    """
+    Enhanced CSV Parser that handles:
+    1. Raw Data without headers (old style)
+    2. Excel Exports with headers and Row Labels (new style - Hisc1p1.xlsx format)
+    """
     try:
-        # Load without header to access by index
-        df = pd.read_csv(file_obj, header=None)
+        # Try reading with header first to detect "Store 1", "Store 2" etc.
+        df = pd.read_csv(file_obj)
+        
+        # Check if it's the specific Excel export format (First col is labels)
+        is_labeled_format = False
+        if len(df.columns) > 1 and isinstance(df.iloc[0, 0], str) and "1." in str(df.iloc[0, 0]):
+            is_labeled_format = True
+
         stores_data = []
-        
-        # Determine number of columns to check (usually col 1 to 7 for 7 stores)
-        num_cols = min(df.shape[1], 8)
-        
-        for i in range(1, num_cols): 
-            try:
-                def get_val(r): 
-                    try:
-                        val_str = str(df.iloc[r, i]).replace(',', '').strip()
-                        return float(val_str)
-                    except:
-                        return 0.0
-                
-                s = {
-                    'prev_price': get_val(1), 
-                    'cash': get_val(3),
-                    'inv_rx': get_val(4), 'inv_otc': get_val(5),
-                    'notes_pay': get_val(6), 'lt_debt': get_val(7),
-                    'prev_share': get_val(17)
-                }
-                if s['prev_share'] < 1.0: s['prev_share'] *= 100
-                
-                # Location Mapping
-                if i in [1, 7]: s['loc_code'] = 1
-                elif i in [2, 3, 4]: s['loc_code'] = 2
-                elif i in [5, 6]: s['loc_code'] = 3
-                else: s['loc_code'] = 0
-                
-                stores_data.append(restructure_financials(s))
-            except: continue
+
+        if is_labeled_format:
+            # --- Logic for Hisc1p1.xlsx - Sheet1.csv ---
+            # Columns start from index 1 (Store 1) to end
+            for col_idx in range(1, len(df.columns)):
+                try:
+                    # Helper to get float from (row_index, col_index)
+                    def get_val_at(row_idx):
+                        val = str(df.iloc[row_idx, col_idx]).replace(',', '').strip()
+                        return float(val) if val else 0.0
+
+                    # Mapping based on the file labels:
+                    # Row 0: "1. Store's Past Rx Charge" -> prev_price
+                    # Row 2: "3. Store's Cash" -> cash
+                    # Row 3: "4. Beg Rx Inv" -> inv_rx
+                    # Row 4: "5. Beg Oth Inv" -> inv_otc
+                    # Row 5: "6. Emergency Loan" -> notes_pay
+                    # Row 16: "17. Market Share" -> prev_share (index 16 is label 17)
+                    
+                    s = {
+                        'prev_price': get_val_at(0),
+                        'cash': get_val_at(2),
+                        'inv_rx': get_val_at(3),
+                        'inv_otc': get_val_at(4),
+                        'notes_pay': get_val_at(5),
+                        'lt_debt': 0.0, # Default, will be fixed by restructure
+                        'prev_share': get_val_at(16)
+                    }
+                    if s['prev_share'] < 1.0: s['prev_share'] *= 100
+                    
+                    # Infer location from column index (cycling 1,2,3)
+                    # Col 1 -> Store 1 (Med), Col 2 -> Store 2 (Neigh), etc.
+                    store_num = col_idx 
+                    if store_num in [1, 7]: s['loc_code'] = 1
+                    elif store_num in [2, 3, 4]: s['loc_code'] = 2
+                    elif store_num in [5, 6]: s['loc_code'] = 3
+                    else: s['loc_code'] = 2
+
+                    stores_data.append(restructure_financials(s))
+                except Exception as e:
+                    continue
+
+        else:
+            # --- Fallback for Raw CSV (No Headers) ---
+            file_obj.seek(0)
+            df = pd.read_csv(file_obj, header=None)
+            num_cols = min(df.shape[1], 8)
+            for i in range(1, num_cols): 
+                try:
+                    def get_val(r): 
+                        try: return float(str(df.iloc[r, i]).replace(',', '').strip())
+                        except: return 0.0
+                    
+                    s = {
+                        'prev_price': get_val(1), 'cash': get_val(3),
+                        'inv_rx': get_val(4), 'inv_otc': get_val(5),
+                        'notes_pay': get_val(6), 'lt_debt': get_val(7),
+                        'prev_share': get_val(17)
+                    }
+                    if s['prev_share'] < 1.0: s['prev_share'] *= 100
+                    
+                    if i in [1, 7]: s['loc_code'] = 1
+                    elif i in [2, 3, 4]: s['loc_code'] = 2
+                    elif i in [5, 6]: s['loc_code'] = 3
+                    else: s['loc_code'] = 0
+                    
+                    stores_data.append(restructure_financials(s))
+                except: continue
+
         return stores_data
+
     except Exception as e:
-        st.error(f"CSV Error: {e}")
+        st.error(f"CSV Parser Error: {e}")
         return []
 
 def get_starting_inputs():
@@ -246,40 +279,29 @@ def generate_master_report(players):
     for p_id, p in players.items():
         if not p['history']: continue
         last = p['history'][-1]; inp = p['inputs']; fin = p['financials']
-
         tot_sales = last['total_rev']; rx_sales = last['rev_rx']; oth_sales = last['rev_otc']
+        
+        # Avoid div by zero
         rx_vol_est = rx_sales / last['avg_price'] if last['avg_price'] > 0 else 0
-        avg_rx_pr = last['avg_price']
         rx_ing_cost = (last['cogs_rx'] / rx_vol_est) if rx_vol_est > 0 else base_rx_cost
         rx_gm_pct = ((rx_sales - last['cogs_rx']) / rx_sales * 100) if rx_sales > 0 else 0
-        party_gm_pct = rx_gm_pct * 0.95 
-        tot_rxs = int(rx_vol_est); party_rxs = int(tot_rxs * (mkt[3]/100))
-
+        
         total_assets = fin['cash'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['fixed_assets'] + fin['acct_receivable']
         total_liab = fin['acct_payable'] + fin['notes_payable'] + fin['long_term_debt']
         net_worth = total_assets - total_liab
-        
         curr_assets = fin['cash'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['acct_receivable']
         curr_liab = fin['acct_payable'] + fin['notes_payable']
         
         current_ratio = (curr_assets / curr_liab) if curr_liab > 0 else 0
-        acid_test = ((fin['cash'] + fin['acct_receivable']) / curr_liab) if curr_liab > 0 else 0
         turnover = (last['total_cogs'] / (fin['inventory_rx'] + fin['inventory_otc'])) if (fin['inventory_rx'] + fin['inventory_otc']) > 0 else 0
-        
         roi = (last['net_profit'] / total_assets * 100) if total_assets > 0 else 0
-        roa = roi; debt_nw = (total_liab / net_worth) if net_worth > 0 else 0
 
         row = {
             "Store": p['shop_name'], "TOT SALES": tot_sales, "Rx SALES": rx_sales, "OTH SALES": oth_sales,
-            "Avg Rx Pr": avg_rx_pr, "Rx Ing $": rx_ing_cost, "Rx GM%": rx_gm_pct, "3-Pty GM%": party_gm_pct,
-            "Tot #Rx's": tot_rxs, "3-Pty #Rx": party_rxs, "Copay Dis": inp[2], "OTC M'kup": inp[13],
-            "Rx Mkt Sh": last['Rx Mkt Sh'], "Store Hrs": inp[6], "A/P Paid": inp[28], "M'age Pay": inp[23],
-            "Loan": fin['notes_payable'], "Mgr Hrs": inp[22], "RP OverT": 0.0, "RP Hr Pay": inp[17],
-            "Clk OverT": 0.0, "Clk Wage": inp[19], "Adv Exp": inp[7], "Net Worth": net_worth,
-            "Cash Flow": last['cf_end'] - last['cf_start'], "E Rx Pur": 0.0, "E OTC Pur": 0.0,
-            "RATIO: Current": current_ratio, "RATIO: Acid Test": acid_test, "RATIO: Turnover": turnover,
-            "RATIO: ROI %": roi, "RATIO: ROA %": roa, "RATIO: G Margin %": last['kpi_gm_pct'],
-            "RATIO: Profit %": last['kpi_np_pct'], "RATIO: Debt/NW": debt_nw, "LOCATION": LOC_MAP[p['location_code']]
+            "Avg Rx Pr": last['avg_price'], "Rx Ing $": rx_ing_cost, "Rx GM%": rx_gm_pct,
+            "Net Worth": net_worth, "Cash Flow": last['cf_end'] - last['cf_start'],
+            "RATIO: Current": current_ratio, "RATIO: Turnover": turnover, "RATIO: ROI %": roi,
+            "RATIO: Profit %": last['kpi_np_pct'], "LOCATION": LOC_MAP[p['location_code']]
         }
         data.append(row)
     return pd.DataFrame(data).set_index("Store").T if data else pd.DataFrame()
@@ -289,7 +311,7 @@ def calculate_results():
     otc_w_df = st.session_state.otc_weights_df
     mkt = st.session_state.market_data_list
     
-    BASE_COST_RX = mkt[0]; PCT_3RD_PARTY = mkt[3]/100.0; MAX_AD_EXP = mkt[4]
+    BASE_COST_RX = mkt[0]; MAX_AD_EXP = mkt[4]
     INT_RATE_LOAN = mkt[8]/100.0; AVG_RX_VOL = mkt[9]; AVG_OTC_VOL = mkt[10]
     SLIPPAGE_RATE = mkt[11]/100.0; WEEKS_PER_PERIOD = 52 / mkt[12] if mkt[12] > 0 else 13
     LAG_AR = mkt[14]/100.0; INFLATION = mkt[19]/100.0
@@ -302,7 +324,6 @@ def calculate_results():
     if num_stores == 0: return
 
     FIXED_RENT_RATE = {k: v * (1 + INFLATION) for k, v in LOC_RENT_RATE.items()}
-
     total_rph_wage = sum([p['inputs'][18] for p in active_stores])
     avg_rph_wage = total_rph_wage / num_stores if num_stores else 25.0
 
@@ -373,11 +394,9 @@ def calculate_results():
                    (row['R_Credit'] * w_rx['Credit']) + (row['R_Inventory'] * w_rx['Inventory']) + \
                    (row['R_Share'] * w_rx['MktShare']) + (row['R_Eff'] * w_rx['Efficiency'])
         
-        # --- LOGIC TUNING ---
         if row['price'] < 19.00: score_rx *= 1.35
         elif row['price'] < avg_mkt_price: score_rx *= 1.05
         if loc_name == "Medical Center": score_rx *= 0.80
-
         if st.session_state.players[tid]['inputs'][33]: score_rx *= 1.05
         rx_scores[tid] = score_rx; total_rx_score += score_rx
 
@@ -485,9 +504,6 @@ def calculate_results():
             "rev_rx": total_rx_sales, "rev_otc": total_otc_sales, "total_rev": total_sales,
             "cogs_rx": cogs_rx_total, "cogs_otc": cogs_otc_total, "total_cogs": cogs_rx_total + cogs_otc_total,
             "gross_margin": gm, "net_profit": net_profit,
-            "exp_wages": total_wages, "exp_ben": ben_cost, "exp_mgr": mgr_salary,
-            "exp_rent": rent, "exp_util": utilities, "exp_promo": promo,
-            "exp_bad_debt": bad_debt, "exp_mortgage": mortgage, "exp_interest": intr_exp, "inc_interest": intr_inc,
             "bs_cash": fin['cash'], "bs_ar": fin['acct_receivable'] + fin['acct_receivable_3rd'],
             "bs_inv_rx": fin['inventory_rx'], "bs_inv_otc": fin['inventory_otc'],
             "bs_invest": fin['investments'], "bs_fixed": fin['fixed_assets'],
@@ -495,9 +511,8 @@ def calculate_results():
             "bs_lt_debt": fin['long_term_debt'], "bs_equity": fin['retained_earnings'],
             "cf_start": cash_start, "cf_in": total_cash_in, "cf_out": total_cash_out, "cf_eloan": e_loan, "cf_end": fin['cash'],
             "kpi_gm_pct": (gm/total_sales*100) if total_sales else 0,
-            "kpi_payroll_pct": ((total_wages+ben_cost+mgr_salary)/total_sales*100) if total_sales else 0,
-            "kpi_rent_pct": (rent/total_sales*100) if total_sales else 0,
             "kpi_np_pct": (net_profit/total_sales*100) if total_sales else 0,
+            "kpi_rent_pct": (rent/total_sales*100) if total_sales else 0,
             "avg_price": unit_price, "Rx Mkt Sh": my_rx_share * 100, "LOCATION": LOC_MAP[p['location_code']]
         }
         p['history'].append(metrics)
@@ -508,8 +523,8 @@ def calculate_results():
 # 5. UI COMPONENTS
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V36.12")
-    st.caption("Crash Fixed + Safe Loader")
+    st.title("💊 Communi-Pharm V36.13")
+    st.caption("Excel/CSV Import Fix")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def render_instructor_ui():
@@ -526,16 +541,14 @@ def render_instructor_ui():
             if st.button("Load & Create") and f:
                 scenarios = []
                 try:
-                    # [FIX]: Check file type before reading
+                    # CSV Handler
                     if "csv" in f.name.lower():
                         f.seek(0)
                         scenarios = parse_csv_scenario(f)
                     else:
-                        # Safe text decoding for .p1 or .txt
-                        try:
-                            content = f.getvalue().decode("utf-8")
-                        except:
-                            content = f.getvalue().decode("cp1252", errors='ignore')
+                        # P1 Text Handler
+                        try: content = f.getvalue().decode("utf-8")
+                        except: content = f.getvalue().decode("cp1252", errors='ignore')
                         scenarios = parse_text_scenario(content)
                         
                     if scenarios: 
@@ -544,7 +557,7 @@ def render_instructor_ui():
                         st.session_state.game_state="SETUP_STEP_2"
                         st.rerun()
                     else:
-                        st.error("Could not parse file. Please check format.")
+                        st.error("Could not parse file. Check format.")
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
 
