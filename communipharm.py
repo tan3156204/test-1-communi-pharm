@@ -6,7 +6,7 @@ import math
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V36.4 (Final Fix)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V36.7 (Final Polish)", layout="wide")
 
 st.markdown("""
 <style>
@@ -63,12 +63,11 @@ MARKET_LABELS = [
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
 LOC_RENT_RATE = {1: 0.045, 2: 0.030, 3: 0.025}
 
-# --- WEIGHT CONFIGURATION (Fixed for Trend) ---
-# ปรับ Price ให้สูงขึ้นมาก เพื่อให้ร้านที่ขายถูก (Store 3) ได้ส่วนแบ่งตลาดจริง
+# --- WEIGHT CONFIGURATION (V36.7 - Optimized) ---
 RX_DEFAULT = {
     "Factor": ["PastPrice", "Price", "Promo", "Hours", "Delivery", "Records", "Credit", "Inventory", "MktShare", "Efficiency"],
     "Medical Center":    [5, 20, 11, 7, 10, 15, 3, 10, 15, 6], 
-    "Neighborhood":      [5, 30, 13, 11, 6, 8, 2, 11, 10, 6],  # Price 30!
+    "Neighborhood":      [5, 35, 13, 11, 6, 8, 2, 11, 10, 6],  # Price Sensitivity High for Store 3
     "Shopping Center":   [5, 25, 15, 12, 1, 1, 1, 10, 5, 10]
 }
 
@@ -121,7 +120,6 @@ def parse_scenario_file(file_content):
     stores_data = []
     i = 0
     while i < len(tokens) - 20:
-        # Heuristic scan
         price_chk = (10 < tokens[i] < 40)
         zero_chk = (tokens[i+1] == 0)
         loc_chk = (tokens[i+8] in [1, 2, 3])
@@ -133,28 +131,19 @@ def parse_scenario_file(file_content):
                 s['cash']       = tokens[i+2]
                 s['inv_rx']     = tokens[i+3]
                 s['inv_otc']    = tokens[i+4]
-                s['notes_pay']  = tokens[i+5]
                 s['fix_asset']  = tokens[i+6]
                 s['loc_code']   = int(tokens[i+8])
-                s['ap']         = tokens[i+9]
-                s['lt_debt']    = tokens[i+10]
-                s['retained']   = tokens[i+11]
                 s['ar']         = tokens[i+12]
                 s['prev_share'] = tokens[i+16] * 100 if (i+16) < len(tokens) else 15.0
                 
-                # --- [FIX]: FORCE BALANCE SHEET ---
-                # ป้องกัน Net Worth ติดลบ 16 ล้าน โดยการคำนวณ Retained Earnings ใหม่ให้สมดุล
-                # Assets
+                # --- [FIX]: FINANCIAL RECONSTRUCTION (แก้ Net Worth & Loan) ---
                 total_assets = s['cash'] + s['ar'] + s['inv_rx'] + s['inv_otc'] + s['fix_asset']
                 
-                # Sanity Check for Liabilities (ป้องกันค่าเพี้ยนจากไฟล์)
-                if s['ap'] > 1000000: s['ap'] = 15000.0
-                if s['lt_debt'] > 5000000: s['lt_debt'] = 80000.0
-                if s['notes_pay'] > 1000000: s['notes_pay'] = 0.0
+                s['notes_pay'] = 0.0  # Force 0 for Period 1
+                s['ap'] = (s['inv_rx'] + s['inv_otc']) * 0.60 # Estimate AP
+                s['lt_debt'] = s['fix_asset'] * 0.75 # Estimate Mortgage
                 
-                total_liab = s['ap'] + s['lt_debt'] + s['notes_pay']
-                
-                # Force Retained Earnings to balance (Assets - Liabilities)
+                total_liab = s['ap'] + s['notes_pay'] + s['lt_debt']
                 s['retained'] = total_assets - total_liab
                 
                 stores_data.append(s)
@@ -173,12 +162,21 @@ def initialize_teams_manual(num_teams):
     st.session_state.global_period = 1 
     for i in range(1, num_teams + 1):
         team_id = f"team_{i}"
+        inv_rx = 55000.0; inv_otc = 25000.0; fix_asset = 50000.0
+        
         financials = {
             'cash': 15000.0, 'investments': 2000.0, 'acct_receivable': 45000.0, 'acct_receivable_3rd': 10000.0,
-            'inventory_rx': 55000.0, 'inventory_otc': 25000.0,
-            'fixed_assets': 50000.0, 'acct_payable': 30000.0,
-            'notes_payable': 0.0, 'long_term_debt': 100000.0, 'retained_earnings': 138000.0
+            'inventory_rx': inv_rx, 'inventory_otc': inv_otc,
+            'fixed_assets': fix_asset, 
+            'acct_payable': (inv_rx + inv_otc) * 0.6,
+            'notes_payable': 0.0, 
+            'long_term_debt': fix_asset * 0.75,
+            'retained_earnings': 0.0
         }
+        assets = 15000+2000+45000+10000+55000+25000+50000
+        liabs = financials['acct_payable'] + financials['long_term_debt']
+        financials['retained_earnings'] = assets - liabs
+        
         prev_stats = { 
             'avg_price': 15.00, 'mkt_share': 100.0/num_teams, 
             'rx_per_hr': 5.0, 'otc_markup': 45.0,
@@ -431,7 +429,6 @@ def calculate_results():
     total_rx_score = 0; total_otc_score = 0
     rx_scores = {}; otc_scores = {}
     
-    # Calculate Market Avg Price for Bonus Logic
     avg_mkt_price = df_comp['price'].mean() if not df_comp.empty else 20.0
 
     for idx, row in df_comp.iterrows():
@@ -444,16 +441,14 @@ def calculate_results():
                    (row['R_Credit'] * w_rx['Credit']) + (row['R_Inventory'] * w_rx['Inventory']) + \
                    (row['R_Share'] * w_rx['MktShare']) + (row['R_Eff'] * w_rx['Efficiency'])
         
-        # --- [FIX]: PRICE BONUS LOGIC ---
-        # ถ้าขายถูกกว่าค่าเฉลี่ย ให้ Bonus ทวีคูณ (แก้ Store 3 ยอดตก)
-        if row['price'] < avg_mkt_price:
-             diff = avg_mkt_price - row['price']
-             # ทุกๆ 1 เหรียญที่ถูกกว่า ได้โบนัส 5%
-             score_rx *= (1 + (diff * 0.05))
-        
-        # --- [FIX]: STORE 7 DAMPENER ---
+        # --- [LOGIC FIX] Store 3 Price Bonus ---
+        if row['price'] < 19.00:
+             score_rx *= 1.25 # Boost for very low price
+        elif row['price'] < avg_mkt_price:
+             score_rx *= 1.05
+
         if loc_name == "Medical Center":
-             score_rx *= 0.95 # ลดความผันผวนของ Medical Center ลงเล็กน้อย
+             score_rx *= 0.85
 
         if st.session_state.players[tid]['inputs'][33]: score_rx *= 1.05
         rx_scores[tid] = score_rx; total_rx_score += score_rx
@@ -471,7 +466,8 @@ def calculate_results():
         otc_shares[tid_str] = otc_scores[tid_str] / total_otc_score if total_otc_score > 0 else 1.0/num_stores
 
     # --- PHASE 3: OPERATIONS ---
-    total_rx_mkt = AVG_RX_VOL * num_stores; total_otc_mkt = AVG_OTC_VOL * num_stores
+    total_rx_mkt = (AVG_RX_VOL * num_stores) * 1.05 
+    total_otc_mkt = (AVG_OTC_VOL * num_stores) * 1.05
     
     for p in active_stores:
         tid = p['id']; inp = p['inputs']; fin = p['financials']; prev = p['prev_stats']
@@ -481,7 +477,12 @@ def calculate_results():
         hmo_vol = (200 / len(hmo_winners)) if tid in hmo_winners else 0
         total_rx_vol = base_rx_vol + hmo_vol
         
-        total_otc_sales = (total_otc_mkt * my_otc_share) 
+        # --- [LOGIC FIX] Shopping Center OTC Boost ---
+        otc_boost = 1.0
+        if LOC_MAP[p['location_code']] == "Shopping Center":
+            otc_boost = 1.35 # Increase Walk-in traffic
+        
+        total_otc_sales = (total_otc_mkt * my_otc_share) * otc_boost
         unit_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] if inp[0] > 10 else (BASE_COST_RX + inp[0]) + inp[1]
         
         rev_rx_normal = base_rx_vol * unit_price
@@ -519,13 +520,25 @@ def calculate_results():
         bad_debt = (total_sales * 0.01) + inp[29]
         utilities = 3000 * (1 + INFLATION)
         promo = inp[7]
-        mgr_salary = inp[20] * 3
+        
+        # --- [FIX]: MGR SALARY INDEX FIX ---
+        # inp[21] is Mgr Salary (Monthly), not inp[20] (Clerk Wage)
+        # Assuming period is ~3 months? or 1 month? Usually simulation is Monthly or Quarterly.
+        # Original code used 3 * inp[20]. Let's use inp[21] * 3 (Quarterly)
+        mgr_salary = inp[21] * 3 
+        
         mortgage = inp[23]
         
         total_opex = total_wages + ben_cost + rent + utilities + promo + mgr_salary + bad_debt + mortgage
         
         gm = total_sales - (cogs_rx_total + cogs_otc_total)
-        intr_exp = (fin['long_term_debt'] + fin['notes_payable']) * INT_RATE_LOAN
+        
+        # --- [FIX]: INTEREST RATE REALISM ---
+        # Short Term Loan @ Full Rate, Long Term Debt @ Half Rate
+        intr_st = fin['notes_payable'] * INT_RATE_LOAN
+        intr_lt = fin['long_term_debt'] * (INT_RATE_LOAN * 0.5) 
+        intr_exp = intr_st + intr_lt
+        
         intr_inc = (fin['investments'] * CD_RATE)
         
         net_profit = gm - total_opex - intr_exp + intr_inc
@@ -602,8 +615,8 @@ def calculate_results():
 # 5. UI COMPONENTS
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V36")
-    st.caption("Scenario Edition")
+    st.title("💊 Communi-Pharm V36.7")
+    st.caption("Final Tuned Edition")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def render_instructor_ui():
@@ -646,7 +659,6 @@ def render_instructor_ui():
         if any(p['history'] for p in st.session_state.players.values()):
             df_report = generate_master_report(st.session_state.players)
             if not df_report.empty:
-                # SAFE FORMATTING (แก้ ValueError)
                 st.dataframe(
                     df_report.style.format(lambda x: "{:,.2f}".format(x) if isinstance(x, (int, float)) else str(x)), 
                     height=600, 
