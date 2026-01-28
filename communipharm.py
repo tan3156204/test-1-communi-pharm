@@ -3,17 +3,18 @@ import pandas as pd
 import numpy as np
 
 # ==========================================
-# 1. CONFIGURATION & STYLING
+# 1. CONFIGURATION (CLASSIC STYLE)
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V37.10 (Final Hybrid)", layout="wide")
+st.set_page_config(page_title="PharmaSim V37.11", layout="wide", initial_sidebar_state="expanded")
 
+# CSS ให้เหมือนเวอร์ชั่นดั้งเดิมที่สุด
 st.markdown("""
 <style>
-    .block-container { padding-top: 1rem; }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 4px 4px 0 0; gap: 1px; padding-top: 10px; padding-bottom: 10px; }
-    .stTabs [aria-selected="true"] { background-color: #ffffff; border-bottom: 2px solid #4CAF50; font-weight: bold; }
-    .metric-card { background-color: #f9f9f9; border: 1px solid #e0e0e0; padding: 15px; border-radius: 5px; text-align: center; }
+    .main { background-color: #FFFFFF; }
+    h1 { color: #2C3E50; }
+    h2 { color: #34495E; font-size: 1.5rem; }
+    .stButton>button { width: 100%; border-radius: 5px; }
+    .report-font { font-family: 'Courier New', monospace; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -47,19 +48,19 @@ REPORT_ORDER = [
 ]
 
 # ==========================================
-# 2. STATE & DATA INITIALIZATION
+# 2. DATA & LOGIC (FIXED VERSION)
 # ==========================================
-if 'game_state' not in st.session_state:
-    st.session_state.game_state = "SETUP" # เริ่มต้นที่หน้า Setup จำนวนร้าน
-    st.session_state.global_period = 1
+if 'game_active' not in st.session_state:
+    st.session_state.game_active = False
+    st.session_state.global_period = 0
     st.session_state.players = {}
 
 def get_start_state(team_num):
-    # Historical Data (Balance Sheet)
+    # Historical Data (Balance Sheet ต้นงวด)
     data = {
         1: {'cash': 7423, 'ar': 13211, 'inv_rx': 59918, 'inv_otc': 12322, 'ap': 60889, 'ltd': 50000, 're': 14329},
         2: {'cash': 2500, 'ar': 53, 'inv_rx': 76168, 'inv_otc': 86544, 'ap': 102000, 'ltd': 70000, 're': 30942},
-        3: {'cash': 2500, 'ar': 371, 'inv_rx': 60957, 'inv_otc': 117639, 'ap': 61626, 'ltd': 70000, 're': 87496},
+        3: {'cash': 2500, 'ar': 371, 'inv_rx': 60957, 'inv_otc': 117639, 'ap': 61626, 'ltd': 70000, 're': 87496}, # Store 3 High Equity
         4: {'cash': 2200, 'ar': 859, 'inv_rx': 67308, 'inv_otc': 154192, 'ap': 142260, 'ltd': 40233, 're': 82299},
         5: {'cash': 2500, 'ar': 0, 'inv_rx': 65466, 'inv_otc': 98999, 'ap': 123222, 'ltd': 90200, 're': -1135},
         6: {'cash': 2200, 'ar': 4343, 'inv_rx': 95436, 'inv_otc': 99999, 'ap': 102000, 'ltd': 90900, 're': 60311},
@@ -79,35 +80,29 @@ def get_default_inputs(team_num):
     inp[9]=2000; inp[14]=40; inp[15]=60000; inp[16]=100000; inp[21]=3000
     inp[17]=2; inp[18]=22; inp[19]=4; inp[20]=5; inp[26]=0; inp[28]=0 
     
-    # Specific adjustments based on history
     if team_num == 3:
         inp[6]=70; inp[14]=39; inp[15]=65000; inp[16]=120000
         inp[17]=1.3; inp[18]=22.75; inp[19]=7; inp[20]=5.00
     return inp
 
-def initialize_game(num_teams):
+def init_game(num_teams):
     st.session_state.players = {}
     st.session_state.global_period = 1
+    st.session_state.game_active = True
+    
     for i in range(1, num_teams + 1):
         pid = f"team_{i}"
-        # Assign location logic
         loc = 2 if i in [2,3,4] else (3 if i in [5,6] else 1)
         st.session_state.players[pid] = {
-            'id': pid, 
-            'shop_name': f"Store {i} ({LOC_MAP[loc]})",
+            'id': pid, 'shop_name': f"Store {i}",
             'inputs': get_default_inputs(i),
             'financials': get_start_state(i),
             'location_code': loc,
             'status': 'Pending',
             'history': []
         }
-    st.session_state.game_state = "ACTIVE"
 
-# ==========================================
-# 3. LOGIC ENGINE (V37.9 - FIXED MATH)
-# ==========================================
 def run_simulation():
-    # Target Sales Data for calibration
     TARGET_SALES_DATA = {
         1: {'rx_vol': 4655, 'price': 22.02, 'oth_ratio': 0.14},
         2: {'rx_vol': 5971, 'price': 18.54, 'oth_ratio': 0.81},
@@ -124,7 +119,7 @@ def run_simulation():
         inp = p['inputs']
         fin = p['financials']
         
-        # 1. SALES
+        # 1. Sales
         tgt = TARGET_SALES_DATA.get(t_num, TARGET_SALES_DATA[1])
         rx_sales = tgt['rx_vol'] * tgt['price']
         total_sales = rx_sales * (1 + tgt['oth_ratio'])
@@ -135,7 +130,7 @@ def run_simulation():
         cogs = total_sales * (1 - gm_pct)
         gross_profit = total_sales - cogs
         
-        # 3. OPEX (Calculated)
+        # 3. Expense
         wage_rph = inp[17] * 40 * WEEKS * inp[18]
         wage_clk = inp[19] * 40 * WEEKS * inp[20]
         benefits = (wage_rph + wage_clk) * 0.2
@@ -143,15 +138,14 @@ def run_simulation():
         promo = inp[7]
         other_exp = 3000 + (total_sales * 0.01)
         interest = (fin['long_term_debt'] * 0.015) + (fin['notes_payable'] * 0.02)
-        
         total_opex = wage_rph + wage_clk + benefits + rent + promo + other_exp + interest
         net_income = gross_profit - total_opex
         
-        # 4. CASH FLOW (FIXED LOGIC)
-        cash_in = (total_sales * 0.30) + (fin['acct_receivable'] * 0.90) # Collect 30% cash sales + 90% old AR
-        ap_payment = inp[28] if inp[28] > 0 else fin['acct_payable'] # If input 0, pay all old AP
+        # 4. Cash Flow (The Fix)
+        cash_in = (total_sales * 0.30) + (fin['acct_receivable'] * 0.90)
+        ap_payment = inp[28] if inp[28] > 0 else fin['acct_payable']
+        cash_out = ap_payment + (total_opex - interest)
         
-        cash_out = ap_payment + (total_opex - interest) # Pay old debt + current expenses
         net_cash_change = cash_in - cash_out
         fin['cash'] += net_cash_change
         
@@ -161,15 +155,14 @@ def run_simulation():
             fin['notes_payable'] += eloan
             fin['cash'] = 1000
             
-        # 5. BALANCE SHEET UPDATES
+        # 5. Balance Sheet Update
         purchases = inp[14] + inp[15]
         fin['inventory_rx'] = (fin['inventory_rx'] + inp[14]) - (cogs * 0.7)
         fin['inventory_otc'] = (fin['inventory_otc'] + inp[15]) - (cogs * 0.3)
-        fin['acct_receivable'] = (fin['acct_receivable'] * 0.10) + (total_sales * 0.70) # Remaining old AR + New Credit Sales
+        fin['acct_receivable'] = (fin['acct_receivable'] * 0.10) + (total_sales * 0.70)
         fin['acct_payable'] = (fin['acct_payable'] - ap_payment) + purchases
         fin['retained_earnings'] += net_income
         
-        # 6. REPORTING
         report = {
             "TOT SALES": total_sales,
             "Rx SALES": rx_sales,
@@ -190,147 +183,122 @@ def run_simulation():
     st.session_state.global_period += 1
 
 # ==========================================
-# 4. UI COMPONENTS (Restored V37.7 Style)
+# 3. UI INTERFACE (Classic)
 # ==========================================
+# Sidebar Login Zone
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3004/3004458.png", width=50)
-    st.title("Communi-Pharm")
-    st.caption(f"Version 37.10 | Period: {st.session_state.global_period}")
-    st.divider()
+    st.title("💊 PharmaSim")
+    st.markdown("---")
+    role = st.radio("Select Role:", ["Student", "Instructor"])
+    st.markdown("---")
+
+# --- INSTRUCTOR VIEW ---
+if role == "Instructor":
+    st.header("👨‍🏫 Instructor Dashboard")
     
-    role = st.selectbox("👤 Select Role", ["Student", "Instructor"])
+    password = st.sidebar.text_input("Admin Password", type="password")
     
-    if role == "Instructor":
-        pwd = st.text_input("🔑 Admin Password", type="password")
-        if pwd == ADMIN_PASSWORD:
-            st.success("Access Granted")
-            if st.session_state.game_state == "ACTIVE":
-                if st.button("▶️ RUN PERIOD", type="primary", use_container_width=True):
-                    run_simulation()
+    if password == ADMIN_PASSWORD:
+        # 1. SETUP PHASE
+        if not st.session_state.game_active:
+            st.info("System Ready. Please initialize the simulation.")
+            with st.form("setup_form"):
+                st.subheader("⚙️ Simulation Setup")
+                num_teams = st.number_input("Number of Stores (Teams)", min_value=1, max_value=7, value=7)
+                if st.form_submit_button("Start New Simulation"):
+                    init_game(num_teams)
                     st.rerun()
-                if st.button("⚠️ RESET GAME", type="secondary", use_container_width=True):
-                    st.session_state.game_state = "SETUP"
-                    st.rerun()
+        
+        # 2. ACTIVE PHASE
         else:
-            st.warning("Locked")
-
-def render_setup_screen():
-    st.title("🛠️ Game Setup")
-    st.info("Configure the simulation parameters before starting.")
-    
-    with st.container():
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            num = st.number_input("Number of Teams (Stores)", min_value=1, max_value=7, value=7, step=1)
-        
-        st.write(f"This will initialize **{num} stores** with historical data from InputC1P1.")
-        
-        if st.button("🚀 Initialize Simulation", type="primary"):
-            initialize_game(num)
-            st.rerun()
-
-def render_student_view():
-    if not st.session_state.players:
-        st.warning("Game not started. Please ask Instructor to initialize.")
-        return
-
-    # Team Selector
-    team_ids = list(st.session_state.players.keys())
-    selected_team = st.selectbox("Select Your Store", team_ids, format_func=lambda x: st.session_state.players[x]['shop_name'])
-    player = st.session_state.players[selected_team]
-    
-    st.header(f"🏥 {player['shop_name']}")
-    
-    # Tabs for UI organization
-    tab1, tab2 = st.tabs(["📝 Decision Entry", "📊 Performance Reports"])
-    
-    with tab1:
-        st.markdown("### 📥 Period Decisions")
-        with st.form("decision_form"):
-            df_inp = pd.DataFrame({"Parameter": INPUT_LABELS, "Value": player['inputs']})
-            edited_df = st.data_editor(
-                df_inp, 
-                height=500, 
-                use_container_width=True, 
-                hide_index=True,
-                column_config={"Value": st.column_config.NumberColumn(format="%.2f")}
-            )
-            
-            if st.form_submit_button("💾 Save Decisions"):
-                player['inputs'] = edited_df['Value'].tolist()
-                player['status'] = 'Ready'
-                st.success(f"Decisions for {player['shop_name']} saved!")
-
-    with tab2:
-        st.markdown("### 📈 Financial Overview")
-        if player['history']:
-            last = player['history'][-1]
-            
-            # Key Metrics Row
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Total Sales", f"${last['TOT SALES']:,.0f}")
-            c2.metric("Net Worth", f"${last['Net Worth']:,.0f}", delta_color="normal")
-            c3.metric("Cash Flow", f"${last['Cash Flow']:,.0f}")
-            c4.metric("Emergency Loan", f"${last['Loan']:,.0f}", delta_color="inverse")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Current Period", st.session_state.global_period)
+            c2.metric("Active Stores", len(st.session_state.players))
+            c3.metric("Status", "Running")
             
             st.divider()
             
-            # Full Report Table
-            st.subheader("Detailed Report")
-            df_hist = pd.DataFrame([last]).T
-            df_hist.columns = [f"Period {st.session_state.global_period - 1}"]
-            st.dataframe(df_hist.style.format("{:,.2f}"), height=600, use_container_width=True)
-        else:
-            st.info("Waiting for Period 1 Results...")
-
-def render_instructor_view():
-    if st.session_state.game_state == "SETUP":
-        render_setup_screen()
+            if st.button("▶️ RUN NEXT PERIOD", type="primary"):
+                run_simulation()
+                st.rerun()
+            
+            st.markdown("### 📊 Store Overview")
+            # Summary Table
+            data = []
+            for pid, p in st.session_state.players.items():
+                if p['history']:
+                    r = p['history'][-1]
+                    data.append({
+                        "Store": p['shop_name'],
+                        "Sales": r['TOT SALES'],
+                        "Net Worth": r['Net Worth'],
+                        "Loan": r['Loan'],
+                        "Status": p['status']
+                    })
+                else:
+                    data.append({"Store": p['shop_name'], "Status": "New Game"})
+            
+            st.dataframe(pd.DataFrame(data), use_container_width=True)
+            
+            if st.sidebar.button("⚠️ Reset Simulation"):
+                st.session_state.game_active = False
+                st.session_state.players = {}
+                st.rerun()
     else:
-        st.header("👨‍🏫 Instructor Dashboard")
-        
-        # Overview Cards
-        active_teams = len(st.session_state.players)
-        submitted = sum(1 for p in st.session_state.players.values() if p['status'] == 'Ready')
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Active Stores", active_teams)
-        c2.metric("Decisions Ready", f"{submitted}/{active_teams}")
-        c3.metric("Current Period", st.session_state.global_period)
-        
-        st.divider()
-        st.subheader("🏆 Leaderboard (Latest Period)")
-        
-        data = []
-        for pid, p in st.session_state.players.items():
-            if p['history']:
-                row = p['history'][-1]
-                row['Store Name'] = p['shop_name']
-                data.append(row)
-        
-        if data:
-            df = pd.DataFrame(data)
-            # Reorder for clarity
-            cols = ['Store Name', 'TOT SALES', 'Net Worth', 'Cash Flow', 'Loan', 'Rx GM%']
-            st.dataframe(
-                df[cols].set_index('Store Name').style.format({
-                    'TOT SALES': "${:,.0f}",
-                    'Net Worth': "${:,.0f}",
-                    'Cash Flow': "${:,.0f}",
-                    'Loan': "${:,.0f}",
-                    'Rx GM%': "{:.1%}"
-                }),
-                use_container_width=True
-            )
-        else:
-            st.info("No results available. Input decisions and run the simulation.")
+        st.warning("Please enter admin password in sidebar.")
 
-# ==========================================
-# 5. MAIN APP ROUTER
-# ==========================================
-if role == "Student":
-    render_student_view()
-elif role == "Instructor":
-    if st.session_state.get('main_pwd_check', False) or st.sidebar.text_input("Confirm Admin Password", type="password", key="main_pwd") == ADMIN_PASSWORD:
-        st.session_state.main_pwd_check = True
-        render_instructor_view()
+# --- STUDENT VIEW ---
+elif role == "Student":
+    if not st.session_state.game_active:
+        st.warning("⚠️ Simulation has not started yet. Please wait for the Instructor.")
+    else:
+        # Team Selector
+        team_options = list(st.session_state.players.keys())
+        team_labels = [st.session_state.players[k]['shop_name'] for k in team_options]
+        
+        sel_team = st.sidebar.selectbox("Select Your Store:", team_options, format_func=lambda x: st.session_state.players[x]['shop_name'])
+        player = st.session_state.players[sel_team]
+        
+        st.title(f"🛒 {player['shop_name']}")
+        
+        # Tabs Style (Classic)
+        tab1, tab2 = st.tabs(["📝 INPUT DECISIONS", "📊 FINANCIAL REPORT"])
+        
+        with tab1:
+            st.markdown("### Period Decisions")
+            with st.form("student_inputs"):
+                # Use Data Editor for clean layout
+                df_inp = pd.DataFrame({"Parameter": INPUT_LABELS, "Value": player['inputs']})
+                edited = st.data_editor(
+                    df_inp, 
+                    height=600, 
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={"Value": st.column_config.NumberColumn(format="%.2f")}
+                )
+                
+                if st.form_submit_button("✅ Save Decisions"):
+                    player['inputs'] = edited['Value'].tolist()
+                    player['status'] = 'Ready'
+                    st.success("Decisions saved successfully!")
+
+        with tab2:
+            st.markdown(f"### Results for Period {st.session_state.global_period - 1}")
+            if player['history']:
+                last_rep = player['history'][-1]
+                
+                # Top Metrics
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Total Sales", f"${last_rep['TOT SALES']:,.0f}")
+                m2.metric("Net Worth", f"${last_rep['Net Worth']:,.0f}")
+                m3.metric("Cash Flow", f"${last_rep['Cash Flow']:,.0f}")
+                m4.metric("Emerg. Loan", f"${last_rep['Loan']:,.0f}", delta_color="inverse")
+                
+                st.divider()
+                
+                # Detailed Table
+                df_show = pd.DataFrame(player['history']).T
+                df_show.columns = [f"Period {i+1}" for i in range(len(player['history']))]
+                st.dataframe(df_show.style.format("{:,.2f}"), height=800, use_container_width=True)
+            else:
+                st.info("No results available yet. Please submit decisions and wait for processing.")
