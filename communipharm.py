@@ -101,7 +101,7 @@ if 'otc_weights_df' not in st.session_state: st.session_state.otc_weights_df = p
 # 3. HELPER FUNCTIONS (PARSER & INIT)
 # ==========================================
 
-# --- 3.1 Scenario Parser (ADDED TO FIX NAME ERROR) ---
+# --- 3.1 Scenario Parser ---
 def parse_scenario_file(file_content):
     """Parses HISTC1.P1 raw content into structured store data"""
     try:
@@ -221,6 +221,102 @@ def initialize_teams_from_scenario(scenarios):
             'prev_stats': prev_stats, 
             'history': [] 
         }
+
+# --- 3.3 Report Generator (NEW) ---
+def generate_master_report(players):
+    """สร้างตารางสรุปข้อมูลทั้งหมด (Master Table) ตามรายการที่ Instructor ต้องการ"""
+    data = []
+    
+    # ดึงค่า Market Data ปัจจุบัน
+    mkt = st.session_state.market_data_list
+    base_rx_cost = mkt[0]
+    
+    for p_id, p in players.items():
+        if not p['history']: continue
+        
+        last = p['history'][-1] # ข้อมูลผลลัพธ์งวดล่าสุด
+        inp = p['inputs']       # ข้อมูลการตัดสินใจ (Inputs)
+        fin = p['financials']   # งบการเงินปัจจุบัน
+
+        # --- ดึงตัวเลขและคำนวณ ---
+        tot_sales = last['total_rev']
+        rx_sales = last['rev_rx']
+        oth_sales = last['rev_otc']
+        
+        # Rx Stats
+        rx_vol_est = rx_sales / last['avg_price'] if last['avg_price'] > 0 else 0
+        avg_rx_pr = last['avg_price']
+        # Cost per unit (รวม Slippage แล้ว)
+        rx_ing_cost = (last['cogs_rx'] / rx_vol_est) if rx_vol_est > 0 else base_rx_cost
+        
+        # Margins
+        rx_gm_pct = ((rx_sales - last['cogs_rx']) / rx_sales * 100) if rx_sales > 0 else 0
+        # สมมติ 3rd Party GM ต่ำกว่าปกติเล็กน้อย หรือใช้ค่าเฉลี่ย
+        party_gm_pct = rx_gm_pct * 0.95 
+        
+        # Volume Breakdown (Estimate)
+        tot_rxs = int(rx_vol_est)
+        party_rxs = int(tot_rxs * (mkt[3]/100)) # ใช้ % จาก Market Data
+
+        # Ratios & Financials
+        total_assets = fin['cash'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['fixed_assets'] + fin['acct_receivable']
+        total_liab = fin['acct_payable'] + fin['notes_payable'] + fin['long_term_debt']
+        net_worth = total_assets - total_liab
+        
+        curr_assets = fin['cash'] + fin['inventory_rx'] + fin['inventory_otc'] + fin['acct_receivable']
+        curr_liab = fin['acct_payable'] + fin['notes_payable']
+        
+        current_ratio = (curr_assets / curr_liab) if curr_liab > 0 else 0
+        acid_test = ((fin['cash'] + fin['acct_receivable']) / curr_liab) if curr_liab > 0 else 0
+        turnover = (last['total_cogs'] / (fin['inventory_rx'] + fin['inventory_otc'])) if (fin['inventory_rx'] + fin['inventory_otc']) > 0 else 0
+        
+        roi = (last['net_profit'] / total_assets * 100) if total_assets > 0 else 0
+        roa = roi # ในโมเดลนี้สินทรัพย์รวมใกล้เคียงเงินลงทุน
+        debt_nw = (total_liab / net_worth) if net_worth > 0 else 0
+
+        # --- จัดลง Dictionary ตาม Format ที่ต้องการ ---
+        row = {
+            "Store": p['shop_name'],
+            "TOT SALES": tot_sales,
+            "Rx SALES": rx_sales,
+            "OTH SALES": oth_sales,
+            "Avg Rx Pr": avg_rx_pr,
+            "Rx Ing $": rx_ing_cost,
+            "Rx GM%": rx_gm_pct,
+            "3-Pty GM%": party_gm_pct,
+            "Tot #Rx's": tot_rxs,
+            "3-Pty #Rx": party_rxs,
+            "Copay Dis": inp[2],  # Index 2: Copay Discount
+            "OTC M'kup": inp[13], # Index 13: Markup Other
+            "Rx Mkt Sh": last['Rx Mkt Sh'],
+            "Store Hrs": inp[6],  # Index 6: Hours Open
+            "A/P Paid": inp[28],  # Index 28: Pay A/P
+            "M'age Pay": inp[23], # Index 23: Mortgage
+            "Loan": fin['notes_payable'], # Short Term Loan
+            "Mgr Hrs": inp[22],   # Index 22: Mgr Hrs/Week
+            "RP OverT": 0.0,      # (คำนวณละเอียดใน Logic หลักแล้ว แต่ไม่ได้เก็บแยกตัวแปรไว้ ขอใส่ 0 ไว้ก่อน)
+            "RP Hr Pay": inp[17], # Index 17: Pharm Wage
+            "Clk OverT": 0.0,
+            "Clk Wage": inp[19],  # Index 19: Clerk Wage
+            "Adv Exp": inp[7],    # Index 7: Promo Exp
+            "Net Worth": net_worth,
+            "Cash Flow": last['cf_end'] - last['cf_start'],
+            "E Rx Pur": 0.0, # ต้องดึงจาก Logic (ใน v36 รวมไปใน Purchases แล้ว)
+            "E OTC Pur": 0.0,
+            "RATIO: Current": current_ratio,
+            "RATIO: Acid Test": acid_test,
+            "RATIO: Turnover": turnover,
+            "RATIO: ROI %": roi,
+            "RATIO: ROA %": roa,
+            "RATIO: G Margin %": last['kpi_gm_pct'],
+            "RATIO: Profit %": last['kpi_np_pct'],
+            "RATIO: Debt/NW": debt_nw,
+            "LOCATION": LOC_MAP[p['location_code']]
+        }
+        data.append(row)
+
+    if not data: return pd.DataFrame()
+    return pd.DataFrame(data).set_index("Store").T
 
 # ==========================================
 # 4. LOGIC ENGINE (V32 Hybrid)
@@ -505,6 +601,8 @@ def calculate_results():
             "kpi_rent_pct": (rent/total_sales*100) if total_sales else 0,
             "kpi_np_pct": (net_profit/total_sales*100) if total_sales else 0,
             
+            # Extra Data for Report
+            "avg_price": unit_price,
             "Rx Mkt Sh": my_rx_share * 100,
             "LOCATION": LOC_MAP[p['location_code']]
         }
@@ -563,18 +661,13 @@ def render_instructor_ui():
     elif st.session_state.game_state == "ACTIVE":
         st.success(f"### 🏁 Period {st.session_state.global_period - 1} Results")
         
+        # [NEW] เรียกใช้ Master Report แทนตารางเดิม
         if any(p['history'] for p in st.session_state.players.values()):
-            data = []
-            for p in st.session_state.players.values():
-                if p['history']:
-                    last = p['history'][-1]
-                    data.append({
-                        "Team": p['shop_name'],
-                        "Net Profit": f"${last['net_profit']:,.0f}",
-                        "Cash": f"${last['bs_cash']:,.0f}",
-                        "Mkt Share": f"{last['Rx Mkt Sh']:.1f}%"
-                    })
-            st.dataframe(pd.DataFrame(data), use_container_width=True)
+            df_report = generate_master_report(st.session_state.players)
+            if not df_report.empty:
+                st.dataframe(df_report.style.format("{:,.2f}"), height=600, use_container_width=True)
+            else:
+                st.warning("No data available yet.")
         
         st.divider()
         col1, col2 = st.columns([3, 1])
