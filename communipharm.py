@@ -665,7 +665,18 @@ def render_instructor_ui():
         if any(p['history'] for p in st.session_state.players.values()):
             df_report = generate_master_report(st.session_state.players)
             if not df_report.empty:
-                st.dataframe(df_report.style.format("{:,.2f}"), height=600, use_container_width=True)
+                # [NEW] เรียกใช้ Master Report (แก้ Error formatting)
+        if any(p['history'] for p in st.session_state.players.values()):
+            df_report = generate_master_report(st.session_state.players)
+            if not df_report.empty:
+                # ใช้ Lambda Function เช็คก่อนว่าค่าเป็นตัวเลขไหม ถ้าใช่ค่อยจัด Format
+                st.dataframe(
+                    df_report.style.format(lambda x: "{:,.2f}".format(x) if isinstance(x, (int, float)) else str(x)), 
+                    height=600, 
+                    use_container_width=True
+                )
+            else:
+                st.warning("No data available yet.")
             else:
                 st.warning("No data available yet.")
         
@@ -772,3 +783,4 @@ role = st.sidebar.selectbox("Role", ["Student", "Instructor"])
 if role == "Instructor":
     if st.sidebar.text_input("Pwd", type="password") == ADMIN_PASSWORD: render_instructor_ui()
 else: render_student_ui()
+
