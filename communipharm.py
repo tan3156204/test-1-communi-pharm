@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION & CONSTANTS
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V37.1 (KeyError Fixed)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V37.2 (Env Unlocked)", layout="wide")
 
 st.markdown("""
 <style>
@@ -81,9 +81,10 @@ OTC_DEFAULT = {
 }
 
 # ==========================================
-# 2. STATE MANAGEMENT
+# 2. STATE MANAGEMENT (UNLOCKED)
 # ==========================================
-FIXED_MARKET_DATA = [
+# Default values from Period 1 (instruc1p1)
+DEFAULT_MARKET_DATA = [
     11.23, 2.0, 2.75, 46.43, 1200.0, 30.2, 21.2, 9.34,
     10.5, 5949.0, 74500.0, 0.1, 6.0, 14.4, 11.2,
     26.4, 6.0, 30.0, 89.0, 1.1, 77.0, 55.0, 
@@ -95,8 +96,10 @@ if 'game_state' not in st.session_state:
     st.session_state.global_period = 1
     st.session_state.players = {}
 
-# Always enforce correct market data
-st.session_state.market_data_list = list(FIXED_MARKET_DATA)
+# [FIX] Initialize Market Data ONLY if it doesn't exist. 
+# This allows the Instructor to edit it later without it resetting automatically.
+if 'market_data_list' not in st.session_state:
+    st.session_state.market_data_list = list(DEFAULT_MARKET_DATA)
 
 if 'rx_weights_df' not in st.session_state: st.session_state.rx_weights_df = pd.DataFrame(RX_DEFAULT)
 if 'otc_weights_df' not in st.session_state: st.session_state.otc_weights_df = pd.DataFrame(OTC_DEFAULT)
@@ -105,7 +108,7 @@ if 'otc_weights_df' not in st.session_state: st.session_state.otc_weights_df = p
 # 3. SCENARIO INITIALIZATION
 # ==========================================
 def get_hisc1p1_data():
-    """Exact starting balances from Hisc1p1 (FIXED MISSING KEYS)"""
+    """Exact starting balances from Hisc1p1"""
     return [
         {'id': 'team_1', 'loc': 1, 'prev_price': 22.02, 'prev_share': 11.78, 'cash': 7423.15, 'inv_rx': 59918, 'inv_otc': 12322, 'ap': 60889, 'mortgage': 50000, 'fix_asset': 32344, 'ar': 13211, 'notes_pay': 0},
         {'id': 'team_2', 'loc': 2, 'prev_price': 18.54, 'prev_share': 13.17, 'cash': 2500.0, 'inv_rx': 76168, 'inv_otc': 86544, 'ap': 102000, 'mortgage': 70000, 'fix_asset': 37677, 'ar': 53, 'notes_pay': 0},
@@ -149,6 +152,8 @@ def get_inferred_inputs(team_num):
 def initialize_scenario():
     st.session_state.players = {}
     st.session_state.global_period = 1
+    # Force Reset Market Data to defaults only on init
+    st.session_state.market_data_list = list(DEFAULT_MARKET_DATA)
     scenarios = get_hisc1p1_data()
     
     for s in scenarios:
@@ -180,7 +185,7 @@ def initialize_scenario():
 # 4. LOGIC ENGINE
 # ==========================================
 def calculate_results():
-    mkt = st.session_state.market_data_list
+    mkt = st.session_state.market_data_list # Use the current session state market data (editable)
     rx_w_df = st.session_state.rx_weights_df
     otc_w_df = st.session_state.otc_weights_df
     
@@ -191,8 +196,11 @@ def calculate_results():
     AVG_RX_VOL = mkt[9] 
     AVG_OTC_VOL = mkt[10] 
     SLIPPAGE_RATE = mkt[11]/100.0
-    PERIODS_PER_YEAR = max(1, mkt[12])
+    
+    # SAFETY: Ensure valid period divider
+    PERIODS_PER_YEAR = max(1, mkt[12]) 
     WEEKS_PER_PERIOD = 52.0 / PERIODS_PER_YEAR
+    
     LAG_AR = mkt[14]/100.0
     INFLATION = mkt[19]/100.0
     STOCKOUT_PENALTY_RX = mkt[20]/100.0
@@ -368,8 +376,8 @@ def calculate_results():
 # 5. UI COMPONENTS
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V37.1")
-    st.caption("Exact Engine + KeyError Fixed")
+    st.title("💊 Communi-Pharm V37.2")
+    st.caption("Unlocked Environment")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def generate_master_report(players):
@@ -397,8 +405,26 @@ def render_instructor_ui():
         if any(p['history'] for p in st.session_state.players.values()):
             df = generate_master_report(st.session_state.players)
             if not df.empty: st.dataframe(df.style.format(lambda x: "{:,.2f}".format(x) if isinstance(x, (int, float)) else str(x)), height=800, use_container_width=True)
+        st.divider()
         c1, c2 = st.columns([3,1])
-        if c2.button("🧮 RUN PERIOD"): calculate_results(); st.rerun()
+        c1.metric("Status", f"{sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')}/{len(st.session_state.players)} Teams Ready")
+        if c2.button("⚙️ Setup Next Period", type="primary"):
+            st.session_state.game_state = "MARKET_EDIT_RUN"
+            st.rerun()
+
+    elif st.session_state.game_state == "MARKET_EDIT_RUN":
+        st.markdown(f"### 🚨 Market Environment (Period {st.session_state.global_period})"); 
+        
+        # Display Market Data for Editing
+        df_mkt = pd.DataFrame({"Variable": MARKET_LABELS, "Value": st.session_state.market_data_list}); 
+        ed = st.data_editor(df_mkt, height=600, use_container_width=True)
+        c1, c2 = st.columns(2)
+        if c1.button("🔙 Back"): st.session_state.game_state="ACTIVE"; st.rerun()
+        if c2.button("🧮 RUN PERIOD", type="primary"): 
+            st.session_state.market_data_list = ed['Value'].tolist(); 
+            calculate_results(); 
+            st.session_state.game_state="ACTIVE"; 
+            st.rerun()
 
 def render_student_ui():
     if st.session_state.game_state != "ACTIVE": st.warning("⏳ Waiting..."); return
