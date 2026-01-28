@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION & CONSTANTS
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V37.0 (Exact Engine)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V37.1 (KeyError Fixed)", layout="wide")
 
 st.markdown("""
 <style>
@@ -18,10 +18,7 @@ ADMIN_PASSWORD = "admin"
 
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
 
-# [ANALYSIS] Location Multipliers derived from Outputc1p1 data patterns
-# Medical: Normal Rx, Very Low OTC
-# Neigh: High Rx, Normal OTC
-# Shop: Low Rx, Very High OTC
+# Location Multipliers (Tuned)
 LOC_MULTIPLIERS = {
     1: {'Rx': 1.0, 'OTC': 0.18}, 
     2: {'Rx': 1.3, 'OTC': 1.25},
@@ -69,8 +66,7 @@ REPORT_ORDER = [
     "LOCATION"
 ]
 
-# --- WEIGHT CONFIGURATION ---
-# Adjusted to match the sensitivity seen in outputc1p1
+# --- WEIGHTS ---
 RX_DEFAULT = {
     "Factor": ["PastPrice", "Price", "Promo", "Hours", "Delivery", "Records", "Credit", "Inventory", "MktShare", "Efficiency"],
     "Medical Center":    [5, 20, 10, 5, 20, 20, 5, 5, 5, 5], 
@@ -79,15 +75,14 @@ RX_DEFAULT = {
 }
 OTC_DEFAULT = {
     "Factor": ["PrevMarkup", "PresMarkup", "AdIndex", "Hours", "Inventory", "RxShare"],
-    "Medical Center":    [5, 5, 5, 5, 5, 75],       # Medical OTC depends heavily on Rx Traffic
+    "Medical Center":    [5, 5, 5, 5, 5, 75],       
     "Neighborhood":      [15, 25, 15, 15, 10, 20], 
-    "Shopping Center":   [15, 20, 20, 25, 15, 5]    # Shopping OTC depends on Hours/Promo
+    "Shopping Center":   [15, 20, 20, 25, 15, 5]    
 }
 
 # ==========================================
 # 2. STATE MANAGEMENT
 # ==========================================
-# Data from instruc1p1.xlsx
 FIXED_MARKET_DATA = [
     11.23, 2.0, 2.75, 46.43, 1200.0, 30.2, 21.2, 9.34,
     10.5, 5949.0, 74500.0, 0.1, 6.0, 14.4, 11.2,
@@ -107,72 +102,48 @@ if 'rx_weights_df' not in st.session_state: st.session_state.rx_weights_df = pd.
 if 'otc_weights_df' not in st.session_state: st.session_state.otc_weights_df = pd.DataFrame(OTC_DEFAULT)
 
 # ==========================================
-# 3. SCENARIO INITIALIZATION (REVERSE ENGINEERED)
+# 3. SCENARIO INITIALIZATION
 # ==========================================
 def get_hisc1p1_data():
-    """Exact starting balances from Hisc1p1"""
+    """Exact starting balances from Hisc1p1 (FIXED MISSING KEYS)"""
     return [
-        {'id': 'team_1', 'loc': 1, 'prev_price': 22.02, 'prev_share': 11.78, 'cash': 7423.15, 'inv_rx': 59918, 'inv_otc': 12322, 'ap': 60889, 'mortgage': 50000, 'fix_asset': 32344, 'ar': 13211},
-        {'id': 'team_2', 'loc': 2, 'prev_price': 18.54, 'prev_share': 13.17, 'cash': 2500.0, 'inv_rx': 76168, 'inv_otc': 86544, 'ap': 102000, 'mortgage': 70000, 'fix_asset': 37677, 'ar': 53},
-        {'id': 'team_3', 'loc': 2, 'prev_price': 18.44, 'prev_share': 20.69, 'cash': 2500.0, 'inv_rx': 60957, 'inv_otc': 117639, 'ap': 61626, 'mortgage': 70000, 'fix_asset': 37655, 'ar': 371},
-        {'id': 'team_4', 'loc': 2, 'prev_price': 19.61, 'prev_share': 18.45, 'cash': 2200.0, 'inv_rx': 67308, 'inv_otc': 154192, 'ap': 142260, 'mortgage': 70000, 'fix_asset': 40233, 'ar': 859},
-        {'id': 'team_5', 'loc': 3, 'prev_price': 19.47, 'prev_share': 11.25, 'cash': 2500.0, 'inv_rx': 65466, 'inv_otc': 98999, 'ap': 123222, 'mortgage': 90200, 'fix_asset': 45322, 'ar': 0},
-        {'id': 'team_6', 'loc': 3, 'prev_price': 19.91, 'prev_share': 14.07, 'cash': 2200.0, 'inv_rx': 95436, 'inv_otc': 99999, 'ap': 102000, 'mortgage': 90900, 'fix_asset': 51233, 'ar': 4343},
-        {'id': 'team_7', 'loc': 1, 'prev_price': 22.52, 'prev_share': 10.56, 'cash': 1323.0, 'inv_rx': 68224, 'inv_otc': 21222, 'ap': 32444, 'mortgage': 50433, 'fix_asset': 34566, 'ar': 27174}
+        {'id': 'team_1', 'loc': 1, 'prev_price': 22.02, 'prev_share': 11.78, 'cash': 7423.15, 'inv_rx': 59918, 'inv_otc': 12322, 'ap': 60889, 'mortgage': 50000, 'fix_asset': 32344, 'ar': 13211, 'notes_pay': 0},
+        {'id': 'team_2', 'loc': 2, 'prev_price': 18.54, 'prev_share': 13.17, 'cash': 2500.0, 'inv_rx': 76168, 'inv_otc': 86544, 'ap': 102000, 'mortgage': 70000, 'fix_asset': 37677, 'ar': 53, 'notes_pay': 0},
+        {'id': 'team_3', 'loc': 2, 'prev_price': 18.44, 'prev_share': 20.69, 'cash': 2500.0, 'inv_rx': 60957, 'inv_otc': 117639, 'ap': 61626, 'mortgage': 70000, 'fix_asset': 37655, 'ar': 371, 'notes_pay': 2322},
+        {'id': 'team_4', 'loc': 2, 'prev_price': 19.61, 'prev_share': 18.45, 'cash': 2200.0, 'inv_rx': 67308, 'inv_otc': 154192, 'ap': 142260, 'mortgage': 70000, 'fix_asset': 40233, 'ar': 859, 'notes_pay': 2322},
+        {'id': 'team_5', 'loc': 3, 'prev_price': 19.47, 'prev_share': 11.25, 'cash': 2500.0, 'inv_rx': 65466, 'inv_otc': 98999, 'ap': 123222, 'mortgage': 90200, 'fix_asset': 45322, 'ar': 0, 'notes_pay': 0},
+        {'id': 'team_6', 'loc': 3, 'prev_price': 19.91, 'prev_share': 14.07, 'cash': 2200.0, 'inv_rx': 95436, 'inv_otc': 99999, 'ap': 102000, 'mortgage': 90900, 'fix_asset': 51233, 'ar': 4343, 'notes_pay': 0},
+        {'id': 'team_7', 'loc': 1, 'prev_price': 22.52, 'prev_share': 10.56, 'cash': 1323.0, 'inv_rx': 68224, 'inv_otc': 21222, 'ap': 32444, 'mortgage': 50433, 'fix_asset': 34566, 'ar': 27174, 'notes_pay': 0}
     ]
 
 def get_inferred_inputs(team_num):
-    """
-    These inputs are reverse-engineered from outputc1p1.txt to ensure the simulation
-    produces the matching results (e.g. A/P Payment decisions, Price decisions).
-    """
+    """Exact decisions from outputc1p1.txt"""
     inp = [0] * 36
-    # Common defaults
     inp[9]=0; inp[25]=1000; inp[23]=833 
     inp[14]=45000; inp[15]=20000; inp[21]=3000; inp[28]=0
     
     if team_num == 1:
-        # Paid A/P 60889, Price 22.02
         inp[0]=50; inp[1]=5.2; inp[28]=60889; inp[6]=46; inp[7]=600; inp[13]=47
-        inp[17]=2; inp[18]=21; inp[19]=2; inp[20]=4.75; inp[3]=1; inp[4]=1; inp[5]=1
-        inp[23]=898
-        
+        inp[17]=2; inp[18]=21; inp[19]=2; inp[20]=4.75; inp[3]=1; inp[4]=1; inp[5]=1; inp[23]=898
     elif team_num == 2:
-        # Paid A/P 102000, Price 18.54
         inp[0]=50; inp[1]=2.0; inp[28]=102000; inp[6]=60; inp[7]=1500; inp[13]=38
-        inp[17]=2; inp[18]=21; inp[19]=3; inp[20]=4.75; inp[3]=1; inp[4]=1; inp[5]=0
-        inp[23]=1299
-        
+        inp[17]=2; inp[18]=21; inp[19]=3; inp[20]=4.75; inp[3]=1; inp[4]=1; inp[5]=0; inp[23]=1299
     elif team_num == 3:
-        # Paid A/P 61626, Price 18.44
         inp[0]=50; inp[1]=1.6; inp[28]=61626; inp[6]=70; inp[7]=1900; inp[13]=39
         inp[17]=2; inp[18]=22.75; inp[19]=4; inp[20]=5.00; inp[2]=0.25; inp[3]=1
-        inp[23]=1200; inp[14]=10000; inp[15]=55000 # Force E-Purch
-        
+        inp[23]=1200; inp[14]=10000; inp[15]=55000 
     elif team_num == 4:
-        # Paid A/P 142260, Price 19.61
         inp[0]=50; inp[1]=2.8; inp[28]=142260; inp[6]=70; inp[7]=1500; inp[13]=34
-        inp[18]=19.50; inp[20]=4.75; inp[2]=0.25
-        inp[23]=1200; inp[14]=20000
-        
+        inp[18]=19.50; inp[20]=4.75; inp[2]=0.25; inp[23]=1200; inp[14]=20000
     elif team_num == 5:
-        # Paid A/P 123222, Price 19.47, Hours 90
         inp[0]=50; inp[1]=2.7; inp[28]=123222; inp[6]=90; inp[7]=2200; inp[13]=33
-        inp[18]=20.00; inp[20]=4.75; inp[5]=1
-        inp[23]=2000; inp[14]=50000; inp[15]=80000
-        
+        inp[18]=20.00; inp[20]=4.75; inp[5]=1; inp[23]=2000; inp[14]=50000; inp[15]=80000
     elif team_num == 6:
-        # Paid A/P 102000, Price 19.91
         inp[0]=50; inp[1]=3.0; inp[28]=102000; inp[6]=75; inp[7]=3000; inp[13]=37
-        inp[18]=22.00; inp[20]=5.12
-        inp[23]=1300; inp[14]=70000; inp[15]=80000
-        
+        inp[18]=22.00; inp[20]=5.12; inp[23]=1300; inp[14]=70000; inp[15]=80000
     elif team_num == 7:
-        # Paid A/P 32444, Price 22.52
         inp[0]=50; inp[1]=5.5; inp[28]=32444; inp[6]=48; inp[7]=600; inp[13]=55
-        inp[18]=19.75; inp[20]=4.90
-        inp[23]=900
-        
+        inp[18]=19.75; inp[20]=4.90; inp[23]=900
     return inp
 
 def initialize_scenario():
@@ -182,8 +153,6 @@ def initialize_scenario():
     
     for s in scenarios:
         team_num = int(s['id'].split('_')[1])
-        
-        # Calculate Equity to balance the books
         total_assets = s['cash'] + s['inv_rx'] + s['inv_otc'] + s['fix_asset'] + s['ar']
         total_liab = s['ap'] + s['mortgage'] + s['notes_pay']
         equity = total_assets - total_liab
@@ -200,7 +169,6 @@ def initialize_scenario():
             'avg_price': s['prev_price'], 'mkt_share': s['prev_share'], 
             'rx_per_hr': 6.0, 'otc_markup': 45.0, 'ad_index': 1.0
         }
-        
         st.session_state.players[s['id']] = {
             'id': s['id'], 'shop_name': f"Store {team_num} ({LOC_MAP[s['loc']]})", 
             'location_code': s['loc'], 'status': 'Pending',
@@ -209,23 +177,22 @@ def initialize_scenario():
         }
 
 # ==========================================
-# 4. LOGIC ENGINE (MARKET SHARE ALLOCATION)
+# 4. LOGIC ENGINE
 # ==========================================
 def calculate_results():
     mkt = st.session_state.market_data_list
     rx_w_df = st.session_state.rx_weights_df
     otc_w_df = st.session_state.otc_weights_df
     
-    # 1. PARSE MARKET DATA
     BASE_COST_RX = mkt[0]
     PCT_3RD_PARTY = mkt[3] / 100.0
     MAX_AD_EXP = mkt[4]
     INT_RATE_LOAN = mkt[8]/100.0
-    AVG_RX_VOL = mkt[9] # 5949
-    AVG_OTC_VOL = mkt[10] # 74500
+    AVG_RX_VOL = mkt[9] 
+    AVG_OTC_VOL = mkt[10] 
     SLIPPAGE_RATE = mkt[11]/100.0
-    PERIODS_PER_YEAR = max(1, mkt[12]) # 6
-    WEEKS_PER_PERIOD = 52.0 / PERIODS_PER_YEAR # 8.66
+    PERIODS_PER_YEAR = max(1, mkt[12])
+    WEEKS_PER_PERIOD = 52.0 / PERIODS_PER_YEAR
     LAG_AR = mkt[14]/100.0
     INFLATION = mkt[19]/100.0
     STOCKOUT_PENALTY_RX = mkt[20]/100.0
@@ -236,22 +203,18 @@ def calculate_results():
     num_stores = len(active_stores)
     if num_stores == 0: return
 
-    # 2. PREPARE RANKING DATA
     ranking_data = []
     avg_rph_wage = np.mean([p['inputs'][18] for p in active_stores])
 
     for p in active_stores:
         inp = p['inputs']
-        # Price
         if inp[0] < 10: rx_price = BASE_COST_RX + inp[0] + inp[1]
         else: rx_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1]
         
-        # Ad Index
         ad_factor = (inp[7] / MAX_AD_EXP) + (p['prev_stats'].get('ad_index', 1.0) * 0.5)
         curr_ad_index = min(2.0, (0.84 * ad_factor) - (0.16 * (ad_factor ** 2)))
         p['curr_ad_index'] = curr_ad_index
         
-        # Efficiency (Wage effect)
         ben_factor = 1.0 + (0.05 if inp[32] else 0) + (0.10 if inp[33] else 0)
         real_wage = inp[18] * ben_factor
         eff_rph = inp[17] if real_wage >= (avg_rph_wage * 0.9) else max(0.5, inp[17] * 0.8)
@@ -269,7 +232,6 @@ def calculate_results():
             'otc_markup': inp[13], 'prev_otc_markup': p['prev_stats'].get('otc_markup', 45.0)
         })
 
-    # 3. CALCULATE RAW SCORES
     df_comp = pd.DataFrame(ranking_data)
     def get_points(series, ascending):
         return (num_stores + 1) - series.rank(method='min', ascending=ascending)
@@ -287,13 +249,10 @@ def calculate_results():
         df_comp['RO_Inventory'] = get_points(df_comp['inv_otc'], False)
         df_comp['RO_RxShare'] = df_comp['R_MktShare']
 
-    # 4. MARKET DISTRIBUTION (THE POT)
-    TOTAL_RX_POT = AVG_RX_VOL * num_stores # ~41,600
-    TOTAL_OTC_POT = AVG_OTC_VOL * num_stores # ~521,500
+    TOTAL_RX_POT = AVG_RX_VOL * num_stores 
+    TOTAL_OTC_POT = AVG_OTC_VOL * num_stores 
 
     rx_scores = {}; otc_scores = {}
-    
-    # Calculate Weighted Scores
     for idx, row in df_comp.iterrows():
         tid = row['id']; loc_name = LOC_MAP[row['loc']]
         w_rx = rx_w_df.set_index("Factor")[loc_name]
@@ -302,62 +261,46 @@ def calculate_results():
         score_rx = sum([row[f'R_{c}'] * w_rx[c] for c in ['Price','PastPrice','Promo','Hours','Delivery','Records','Credit','Inventory','MktShare','Efficiency']])
         score_otc = sum([row[f'RO_{c}'] * w_otc[c] for c in ['PresMarkup','PrevMarkup','AdIndex','Hours','Inventory','RxShare']])
         
-        # Apply Location Multipliers directly to score potential
         loc_mult = LOC_MULTIPLIERS[row['loc']]
         score_rx *= loc_mult['Rx']
         score_otc *= loc_mult['OTC']
-        
-        rx_scores[tid] = score_rx
-        otc_scores[tid] = score_otc
+        rx_scores[tid] = score_rx; otc_scores[tid] = score_otc
 
     sum_rx_scores = sum(rx_scores.values())
     sum_otc_scores = sum(otc_scores.values())
 
-    # 5. FINANCIALS
     for p in active_stores:
         tid = p['id']; inp = p['inputs']; fin = p['financials']
         
-        # --- A. REVENUE ---
-        # Share of the Pot
         my_rx_vol = TOTAL_RX_POT * (rx_scores[tid] / sum_rx_scores)
         my_otc_sales = TOTAL_OTC_POT * (otc_scores[tid] / sum_otc_scores)
         
-        # Price & Split
         unit_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] if inp[0] > 10 else BASE_COST_RX + inp[0] + inp[1]
         vol_3rd = my_rx_vol * PCT_3RD_PARTY
         vol_pvt = my_rx_vol * (1 - PCT_3RD_PARTY)
-        
         rev_rx_pvt = vol_pvt * unit_price
-        rev_rx_3rd = vol_3rd * (BASE_COST_RX + mkt[2]) # Fee based
+        rev_rx_3rd = vol_3rd * (BASE_COST_RX + mkt[2]) 
         total_rx_rev = rev_rx_pvt + rev_rx_3rd
         total_rev = total_rx_rev + my_otc_sales
         
-        # --- B. COGS ---
         rx_cogs = (my_rx_vol * BASE_COST_RX) + (total_rx_rev * SLIPPAGE_RATE)
         otc_cogs = (my_otc_sales / (1 + inp[13]/100)) + (my_otc_sales * SLIPPAGE_RATE * 1.5)
         
-        # Emergency Purchase
         req_rx = rx_cogs; avail_rx = fin['inventory_rx'] + inp[14]
         emer_rx = max(0, req_rx - avail_rx)
         emer_rx_cost = emer_rx * (1 + STOCKOUT_PENALTY_RX)
-        
         req_otc = otc_cogs; avail_otc = fin['inventory_otc'] + inp[15]
         emer_otc = max(0, req_otc - avail_otc)
         emer_otc_cost = emer_otc * (1 + STOCKOUT_PENALTY_OTC)
         
-        # --- C. EXPENSES ---
-        # Wages (Fixed Weeks)
         wage_rph = (inp[17] * 40 * WEEKS_PER_PERIOD * inp[18])
         rph_ot_cost = 0 
-        if my_rx_vol > (inp[17] * 40 * WEEKS_PER_PERIOD * 6): 
-             rph_ot_cost = (my_rx_vol - (inp[17] * 40 * WEEKS_PER_PERIOD * 6)) * inp[18] * 1.5
-
+        if my_rx_vol > (inp[17] * 40 * WEEKS_PER_PERIOD * 6): rph_ot_cost = (my_rx_vol - (inp[17] * 40 * WEEKS_PER_PERIOD * 6)) * inp[18] * 1.5
         wage_clk = (inp[19] * 40 * WEEKS_PER_PERIOD * inp[20])
-        clk_ot_cost = 0 # Simplified
-        
+        clk_ot_cost = 0 
         ben_cost = (wage_rph + wage_clk + rph_ot_cost + clk_ot_cost) * (SS_WC_RATE + (0.05 if inp[32] else 0) + (0.10 if inp[33] else 0))
         
-        mgr_salary = inp[21] * (52 / PERIODS_PER_YEAR / 4) # Monthly input to period cost
+        mgr_salary = inp[21] * (52 / PERIODS_PER_YEAR / 4) 
         rent = total_rev * LOC_RENT_RATE.get(p['location_code'], 0.03)
         utilities = 3000 * (inp[6]/50)
         promo = inp[7]
@@ -366,13 +309,9 @@ def calculate_results():
         total_opex = wage_rph + rph_ot_cost + wage_clk + clk_ot_cost + ben_cost + mgr_salary + rent + utilities + promo + mortgage_pay
         gross_margin = total_rev - (rx_cogs + otc_cogs)
         
-        # --- D. CASH FLOW & LOAN ---
-        cash_in = (total_rev * 0.3) + fin['acct_receivable'] # 30% Cash sales + old AR
-        
+        cash_in = (total_rev * 0.3) + fin['acct_receivable'] 
         ap_payment = inp[28]
         purchases = inp[14] + inp[15] + emer_rx_cost + emer_otc_cost
-        
-        # Cash Out = AP Paid + Opex
         cash_out = ap_payment + total_opex 
         
         net_cash_flow = cash_in - cash_out
@@ -384,11 +323,9 @@ def calculate_results():
             fin['cash'] = inp[25]
             fin['notes_payable'] += eloan
             
-        # --- E. BALANCE SHEET UPDATE ---
         fin['inventory_rx'] = (fin['inventory_rx'] + inp[14] + emer_rx) - rx_cogs
         fin['inventory_otc'] = (fin['inventory_otc'] + inp[15] + emer_otc) - otc_cogs
-        
-        fin['acct_receivable'] = total_rev * 0.7 # 70% Credit Sales
+        fin['acct_receivable'] = total_rev * 0.7 
         fin['acct_payable'] = (fin['acct_payable'] - ap_payment) + purchases
         
         interest = (fin['notes_payable'] + fin['long_term_debt']) * (INT_RATE_LOAN / PERIODS_PER_YEAR)
@@ -399,12 +336,11 @@ def calculate_results():
         total_liab = fin['acct_payable'] + fin['notes_payable'] + fin['long_term_debt']
         net_worth = total_assets - total_liab
 
-        # REPORT
         report = {
             "TOT SALES": total_rev, "Rx SALES": total_rx_rev, "OTH SALES": my_otc_sales,
             "Avg Rx Pr": unit_price, "Rx Ing $": BASE_COST_RX,
             "Rx GM%": (total_rx_rev - rx_cogs)/total_rx_rev if total_rx_rev else 0,
-            "3-Pty GM%": 0.30, # Approx
+            "3-Pty GM%": 0.30, 
             "Tot #Rx's": my_rx_vol, "3-Pty #Rx": vol_3rd, "Copay Dis": inp[2], "OTC M'kup": inp[13]/100,
             "Rx Mkt Sh": my_rx_vol / TOTAL_RX_POT, "Store Hrs": inp[6], "A/P Paid": ap_payment, "M'age Pay": mortgage_pay,
             "Loan": fin['notes_payable'], "Mgr Hrs": 48, "RP OverT": rph_ot_cost,
@@ -432,8 +368,8 @@ def calculate_results():
 # 5. UI COMPONENTS
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V37.0")
-    st.caption("Exact Engine")
+    st.title("💊 Communi-Pharm V37.1")
+    st.caption("Exact Engine + KeyError Fixed")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def generate_master_report(players):
