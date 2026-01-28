@@ -3,28 +3,22 @@ import pandas as pd
 import numpy as np
 
 # ==========================================
-# 1. CONFIGURATION & CONSTANTS
+# 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V37.2 (Env Unlocked)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V37.3 (Logic Locked)", layout="wide")
 
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; }
     .report-table { font-family: 'Courier New', monospace; font-size: 0.85em; }
+    .debug-box { background-color: #ffcccc; padding: 10px; border-radius: 5px; color: #cc0000; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
 ADMIN_PASSWORD = "admin"
 
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
-
-# Location Multipliers (Tuned)
-LOC_MULTIPLIERS = {
-    1: {'Rx': 1.0, 'OTC': 0.18}, 
-    2: {'Rx': 1.3, 'OTC': 1.25},
-    3: {'Rx': 0.85, 'OTC': 1.60}
-}
-
+LOC_MULTIPLIERS = {1: {'Rx': 1.0, 'OTC': 0.18}, 2: {'Rx': 1.3, 'OTC': 1.25}, 3: {'Rx': 0.85, 'OTC': 1.60}}
 LOC_RENT_RATE = {1: 0.045, 2: 0.025, 3: 0.050} 
 
 INPUT_LABELS = [
@@ -43,16 +37,16 @@ INPUT_LABELS = [
 ]
 
 MARKET_LABELS = [
-    "1. Avg Ingredient Cost ($)", "2. Avg Copay Allowed ($)", "3. Avg Third-Party Fee ($)",
-    "4. Percent Market Rx’s 3rd-Party (%)", "5. Maximum Promotion Expenditure ($)", 
-    "6. % Sales A/R Store Type 1 (%)", "7. % A/R Sales Store Type 2 (%)", "8. % A/R Sales Store Type 3 (%)",
-    "9. Interest Rate for Period (%)", "10. Average Number Rx Per Store (#)", "11. Average Other Sales Per Store ($)",
-    "12. Gross Margin Slippage Rate (%)", "13. Number Periods per Year (#)", "14. Third-Party Lag in Payment (%)",
-    "15. A/R Lag in Payment (%)", "16. Mutual Fund Transaction Price ($)", "17. Closing Date Month",
-    "18. Day", "19. Year", "20. Current Inflation Rate (%)",
-    "21. Stockout Rx Inventory Index", "22. Stockout Other Inventory Index", "23. Pass Book Savings Rate (%)",
-    "24. Mutual Fund Next Period ($)", "25. Interest Rate on CD’s (%)", "26. Average Dollar Sales/Clerk ($)",
-    "27. Maximum Price for Rx’s ($)", "28. SS & WC as % of Salary & Wages (%)"
+    "1. Avg Ingredient Cost", "2. Avg Copay Allowed", "3. Avg Third-Party Fee",
+    "4. % Market 3rd-Party", "5. Max Promo Exp", 
+    "6. % Sales A/R Type 1", "7. % A/R Sales Type 2", "8. % A/R Sales Type 3",
+    "9. Interest Rate", "10. Avg Rx Vol", "11. Avg OTC Sales",
+    "12. GM Slippage", "13. Periods/Year (IGNORED)", "14. 3rd-Party Lag",
+    "15. A/R Lag", "16. Mutual Fund Price", "17. Month (Display)",
+    "18. Day (Display)", "19. Year (Display)", "20. Inflation %",
+    "21. Stockout Rx Idx", "22. Stockout OTC Idx", "23. Savings Rate",
+    "24. MF Next Period", "25. CD Rate", "26. Sales/Clerk",
+    "27. Max Rx Price", "28. SS & WC %"
 ]
 
 REPORT_ORDER = [
@@ -81,7 +75,7 @@ OTC_DEFAULT = {
 }
 
 # ==========================================
-# 2. STATE MANAGEMENT (UNLOCKED)
+# 2. STATE MANAGEMENT
 # ==========================================
 # Default values from Period 1 (instruc1p1)
 DEFAULT_MARKET_DATA = [
@@ -95,9 +89,8 @@ if 'game_state' not in st.session_state:
     st.session_state.game_state = "SETUP_STEP_1"
     st.session_state.global_period = 1
     st.session_state.players = {}
+    st.session_state.debug_logs = [] # [NEW] Debug Storage
 
-# [FIX] Initialize Market Data ONLY if it doesn't exist. 
-# This allows the Instructor to edit it later without it resetting automatically.
 if 'market_data_list' not in st.session_state:
     st.session_state.market_data_list = list(DEFAULT_MARKET_DATA)
 
@@ -108,7 +101,6 @@ if 'otc_weights_df' not in st.session_state: st.session_state.otc_weights_df = p
 # 3. SCENARIO INITIALIZATION
 # ==========================================
 def get_hisc1p1_data():
-    """Exact starting balances from Hisc1p1"""
     return [
         {'id': 'team_1', 'loc': 1, 'prev_price': 22.02, 'prev_share': 11.78, 'cash': 7423.15, 'inv_rx': 59918, 'inv_otc': 12322, 'ap': 60889, 'mortgage': 50000, 'fix_asset': 32344, 'ar': 13211, 'notes_pay': 0},
         {'id': 'team_2', 'loc': 2, 'prev_price': 18.54, 'prev_share': 13.17, 'cash': 2500.0, 'inv_rx': 76168, 'inv_otc': 86544, 'ap': 102000, 'mortgage': 70000, 'fix_asset': 37677, 'ar': 53, 'notes_pay': 0},
@@ -120,7 +112,6 @@ def get_hisc1p1_data():
     ]
 
 def get_inferred_inputs(team_num):
-    """Exact decisions from outputc1p1.txt"""
     inp = [0] * 36
     inp[9]=0; inp[25]=1000; inp[23]=833 
     inp[14]=45000; inp[15]=20000; inp[21]=3000; inp[28]=0
@@ -152,7 +143,7 @@ def get_inferred_inputs(team_num):
 def initialize_scenario():
     st.session_state.players = {}
     st.session_state.global_period = 1
-    # Force Reset Market Data to defaults only on init
+    # Force Reset Market Data only on init
     st.session_state.market_data_list = list(DEFAULT_MARKET_DATA)
     scenarios = get_hisc1p1_data()
     
@@ -182,10 +173,11 @@ def initialize_scenario():
         }
 
 # ==========================================
-# 4. LOGIC ENGINE
+# 4. LOGIC ENGINE (LOCKED & DEBUGGED)
 # ==========================================
 def calculate_results():
-    mkt = st.session_state.market_data_list # Use the current session state market data (editable)
+    st.session_state.debug_logs = [] # Clear logs
+    mkt = st.session_state.market_data_list
     rx_w_df = st.session_state.rx_weights_df
     otc_w_df = st.session_state.otc_weights_df
     
@@ -197,9 +189,10 @@ def calculate_results():
     AVG_OTC_VOL = mkt[10] 
     SLIPPAGE_RATE = mkt[11]/100.0
     
-    # SAFETY: Ensure valid period divider
-    PERIODS_PER_YEAR = max(1, mkt[12]) 
-    WEEKS_PER_PERIOD = 52.0 / PERIODS_PER_YEAR
+    # [CRITICAL FIX] IGNORE USER INPUT FOR PERIODS - FORCE 8.66 WEEKS
+    # This guarantees wages will not explode even if mkt[12] is broken
+    WEEKS_PER_PERIOD = 8.66 
+    PERIODS_PER_YEAR = 6.0
     
     LAG_AR = mkt[14]/100.0
     INFLATION = mkt[19]/100.0
@@ -301,6 +294,7 @@ def calculate_results():
         emer_otc = max(0, req_otc - avail_otc)
         emer_otc_cost = emer_otc * (1 + STOCKOUT_PENALTY_OTC)
         
+        # --- EXPENSE DEBUGGER ---
         wage_rph = (inp[17] * 40 * WEEKS_PER_PERIOD * inp[18])
         rph_ot_cost = 0 
         if my_rx_vol > (inp[17] * 40 * WEEKS_PER_PERIOD * 6): rph_ot_cost = (my_rx_vol - (inp[17] * 40 * WEEKS_PER_PERIOD * 6)) * inp[18] * 1.5
@@ -308,14 +302,28 @@ def calculate_results():
         clk_ot_cost = 0 
         ben_cost = (wage_rph + wage_clk + rph_ot_cost + clk_ot_cost) * (SS_WC_RATE + (0.05 if inp[32] else 0) + (0.10 if inp[33] else 0))
         
-        mgr_salary = inp[21] * (52 / PERIODS_PER_YEAR / 4) 
+        mgr_salary = inp[21] * (52 / PERIODS_PER_YEAR / 4) # Monthly input to period cost (approx)
+        if mgr_salary > 10000: mgr_salary = inp[21] * 2 # Safety if period logic fails
+        
         rent = total_rev * LOC_RENT_RATE.get(p['location_code'], 0.03)
         utilities = 3000 * (inp[6]/50)
         promo = inp[7]
         mortgage_pay = inp[23] * (52 / PERIODS_PER_YEAR / 4)
+        if mortgage_pay > 20000: mortgage_pay = inp[23] * 2
         
         total_opex = wage_rph + rph_ot_cost + wage_clk + clk_ot_cost + ben_cost + mgr_salary + rent + utilities + promo + mortgage_pay
         gross_margin = total_rev - (rx_cogs + otc_cogs)
+        
+        # [NEW] Log the expenses for Debugging
+        st.session_state.debug_logs.append({
+            "Store": p['shop_name'],
+            "Total OPEX": total_opex,
+            "Wages": wage_rph + wage_clk,
+            "Benefits": ben_cost,
+            "Rent": rent,
+            "Weeks Used": WEEKS_PER_PERIOD,
+            "Mortgage Pay": mortgage_pay
+        })
         
         cash_in = (total_rev * 0.3) + fin['acct_receivable'] 
         ap_payment = inp[28]
@@ -376,8 +384,8 @@ def calculate_results():
 # 5. UI COMPONENTS
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V37.2")
-    st.caption("Unlocked Environment")
+    st.title("💊 Communi-Pharm V37.3")
+    st.caption("Hard-Locked Time Logic")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def generate_master_report(players):
@@ -393,6 +401,14 @@ def generate_master_report(players):
 
 def render_instructor_ui():
     st.header("👨‍🏫 Instructor Dashboard")
+    
+    # --- DEBUG TAB ---
+    with st.expander("🔧 Debug Logs (Check Expense Anomalies here)", expanded=False):
+        if st.session_state.debug_logs:
+            st.write(pd.DataFrame(st.session_state.debug_logs))
+        else:
+            st.write("No logs yet. Run a period.")
+
     if st.session_state.game_state == "SETUP_STEP_1":
         st.info("Initialize Exact Scenario.")
         if st.button("🚀 Initialize", type="primary"):
@@ -405,22 +421,17 @@ def render_instructor_ui():
         if any(p['history'] for p in st.session_state.players.values()):
             df = generate_master_report(st.session_state.players)
             if not df.empty: st.dataframe(df.style.format(lambda x: "{:,.2f}".format(x) if isinstance(x, (int, float)) else str(x)), height=800, use_container_width=True)
-        st.divider()
         c1, c2 = st.columns([3,1])
-        c1.metric("Status", f"{sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')}/{len(st.session_state.players)} Teams Ready")
-        if c2.button("⚙️ Setup Next Period", type="primary"):
-            st.session_state.game_state = "MARKET_EDIT_RUN"
-            st.rerun()
+        if c2.button("⚙️ Setup Next"): st.session_state.game_state="MARKET_EDIT_RUN"; st.rerun()
 
     elif st.session_state.game_state == "MARKET_EDIT_RUN":
         st.markdown(f"### 🚨 Market Environment (Period {st.session_state.global_period})"); 
-        
-        # Display Market Data for Editing
+        st.warning("Note: 'Periods per Year' input is ignored in this version to prevent calculation errors. Fixed at 6.0 (8.66 weeks).")
         df_mkt = pd.DataFrame({"Variable": MARKET_LABELS, "Value": st.session_state.market_data_list}); 
         ed = st.data_editor(df_mkt, height=600, use_container_width=True)
         c1, c2 = st.columns(2)
         if c1.button("🔙 Back"): st.session_state.game_state="ACTIVE"; st.rerun()
-        if c2.button("🧮 RUN PERIOD", type="primary"): 
+        if c2.button("🧮 RUN PERIOD"): 
             st.session_state.market_data_list = ed['Value'].tolist(); 
             calculate_results(); 
             st.session_state.game_state="ACTIVE"; 
