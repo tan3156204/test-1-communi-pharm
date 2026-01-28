@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V36.25 (Calibrated)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V36.4 (History Match)", layout="wide")
 
 st.markdown("""
 <style>
@@ -17,7 +17,6 @@ st.markdown("""
 ADMIN_PASSWORD = "admin"
 
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
-# ค่าเช่าปรับให้ตรงกับ Expenses ในรายงาน
 LOC_RENT_RATE = {1: 0.045, 2: 0.025, 3: 0.050} 
 
 INPUT_LABELS = [
@@ -48,7 +47,7 @@ MARKET_LABELS = [
     "27. Maximum Price for Rx’s ($)", "28. SS & WC as % of Salary & Wages (%)"
 ]
 
-# --- WEIGHTS (Tuned for outputc1p1) ---
+# --- WEIGHTS ---
 RX_DEFAULT = {
     "Factor": ["PastPrice", "Price", "Promo", "Hours", "Delivery", "Records", "Credit", "Inventory", "MktShare", "Efficiency"],
     "Medical Center":    [5, 25, 10, 5, 15, 15, 5, 5, 10, 5], 
@@ -76,27 +75,28 @@ REPORT_ORDER = [
 # ==========================================
 # 2. STATE MANAGEMENT
 # ==========================================
+DEFAULT_MKT_DATA = [
+    11.23, 2.0, 2.90, 40.0, 3000.0, 30.0, 20.0, 10.0,
+    2.5, 6000.0, 85000.0, 2.0, 4.0, 15.0, 30.0,
+    10.0, 1.0, 1.0, 2024.0, 3.0, 20.0, 20.0, 
+    2.0, 10.5, 5.0, 120.0, 100.0, 15.0
+]
+
 if 'game_state' not in st.session_state:
     st.session_state.game_state = "SETUP_STEP_1"
     st.session_state.global_period = 1
     st.session_state.players = {}
 
-if 'market_data_list' not in st.session_state:
-    st.session_state.market_data_list = [
-        11.23, 2.0, 2.90, 40.0, 3000.0, 30.0, 20.0, 10.0,
-        2.5, 6000.0, 85000.0, 2.0, 4.0, 15.0, 30.0,
-        10.0, 1.0, 1.0, 2024.0, 3.0, 20.0, 20.0, 
-        2.0, 10.5, 5.0, 120.0, 100.0, 15.0
-    ]
+if 'market_data_list' not in st.session_state or len(st.session_state.market_data_list) != len(DEFAULT_MKT_DATA):
+    st.session_state.market_data_list = list(DEFAULT_MKT_DATA)
 
 if 'rx_weights_df' not in st.session_state: st.session_state.rx_weights_df = pd.DataFrame(RX_DEFAULT)
 if 'otc_weights_df' not in st.session_state: st.session_state.otc_weights_df = pd.DataFrame(OTC_DEFAULT)
 
 # ==========================================
-# 3. INITIALIZATION & CALIBRATION
+# 3. INITIALIZATION WITH HISTORICAL INPUTS
 # ==========================================
 def get_static_scenario_data():
-    # Data from Hisc1p1.xlsx / outputc1p1.txt
     return [
         {'id': 'team_1', 'loc': 1, 'prev_price': 22.02, 'prev_share': 11.78, 'cash': 7423.15, 'inv_rx': 59918, 'inv_otc': 12322, 'ap': 60889, 'mortgage': 50000, 'fix_asset': 32344, 'ar': 13211},
         {'id': 'team_2', 'loc': 2, 'prev_price': 18.54, 'prev_share': 13.17, 'cash': 2500.0, 'inv_rx': 76168, 'inv_otc': 86544, 'ap': 102000, 'mortgage': 70000, 'fix_asset': 37677, 'ar': 53},
@@ -108,106 +108,51 @@ def get_static_scenario_data():
     ]
 
 def get_calibrated_inputs(team_num):
-    # Mapping exact inputs from outputc1p1.txt to reproduce the scenario
-    # Key Factors: Pay A/P (Input 28), Price, Wages
-    
-    # Defaults
+    """Returns exact inputs from outputc1p1.txt"""
     inp = [0] * 36
     
-    # Common Defaults
+    # Common
     inp[9] = 0; inp[25] = 1000 # Min Cash
-    inp[23] = 833 # Mortgage est
+    inp[23] = 833 # Est Mortgage
     
     if team_num == 1:
-        # Store 1: Pd A/P 60,889, Loan 18,898
-        inp[0] = 50; inp[1] = 5.2 # Price ~22.02
-        inp[2] = 0; inp[3] = 1; inp[4] = 1; inp[5] = 1 # Services
-        inp[6] = 46 # Hrs
-        inp[7] = 600 # Adv
-        inp[13] = 47 # OTC Mkup
-        inp[17] = 2; inp[18] = 21.00 # RPh Pay
-        inp[19] = 2; inp[20] = 4.75 # Clk Pay
-        inp[28] = 60889 # Pay A/P (CAUSES LOAN)
-        inp[23] = 898 # Mortgage
+        # Puts input 28 (Pay A/P) to 60889 as per history
+        inp[0] = 50; inp[1] = 5.2; inp[2] = 0; inp[3] = 1; inp[4] = 1; inp[5] = 1 
+        inp[6] = 46; inp[7] = 600; inp[13] = 47; inp[17] = 2; inp[18] = 21.00 
+        inp[19] = 2; inp[20] = 4.75; inp[28] = 60889; inp[23] = 898 
+        inp[14]=45000; inp[15]=10000; inp[21]=3000
         
     elif team_num == 2:
-        # Store 2: Pd A/P 102,000, Loan 0
-        inp[0] = 50; inp[1] = 2.0 # Price ~18.54
-        inp[3] = 1; inp[4] = 1; inp[5] = 0
-        inp[6] = 60 # Hrs
-        inp[7] = 1500 # Adv
-        inp[13] = 38 # OTC Mkup
-        inp[17] = 2; inp[18] = 21.00
-        inp[19] = 3; inp[20] = 4.75
-        inp[28] = 102000 # Pay A/P
-        inp[23] = 1299
+        inp[0] = 50; inp[1] = 2.0; inp[3] = 1; inp[4] = 1; inp[5] = 0
+        inp[6] = 60; inp[7] = 1500; inp[13] = 38; inp[17] = 2; inp[18] = 21.00
+        inp[19] = 3; inp[20] = 4.75; inp[28] = 102000; inp[23] = 1299
+        inp[14]=60000; inp[15]=60000; inp[21]=3000
         
     elif team_num == 3:
-        # Store 3: Pd A/P 61,626, E Rx Pur 54k
-        inp[0] = 50; inp[1] = 1.6 # Price ~18.44
-        inp[2] = 0.25 # Copay Dis
-        inp[6] = 70 # Hrs
-        inp[7] = 1900
-        inp[13] = 39
-        inp[17] = 2; inp[18] = 22.75 # High Wage
-        inp[19] = 4; inp[20] = 5.00
-        inp[28] = 61626
-        inp[23] = 1200
-        # Low Rx Purchase -> Causes Emergency Purchase
-        inp[14] = 10000 
+        inp[0] = 50; inp[1] = 1.6; inp[2] = 0.25; inp[6] = 70; inp[7] = 1900
+        inp[13] = 39; inp[17] = 2; inp[18] = 22.75; inp[19] = 4; inp[20] = 5.00
+        inp[28] = 61626; inp[23] = 1200; inp[14] = 10000; inp[15] = 70000; inp[21]=3000
 
     elif team_num == 4:
-        # Store 4: Pd A/P 142,260, Loan 29,884
-        inp[0] = 50; inp[1] = 2.8 # Price ~19.61
-        inp[2] = 0.25
-        inp[6] = 70
-        inp[7] = 1500
-        inp[13] = 34
-        inp[18] = 19.50
-        inp[20] = 4.75
-        inp[28] = 142260 # MASSIVE A/P PAYMENT -> LOAN
-        inp[23] = 1200
-        inp[14] = 20000 # Low purchase
+        inp[0] = 50; inp[1] = 2.8; inp[2] = 0.25; inp[6] = 70; inp[7] = 1500
+        inp[13] = 34; inp[18] = 19.50; inp[20] = 4.75; inp[28] = 142260
+        inp[23] = 1200; inp[14] = 20000; inp[15] = 80000; inp[21]=3000
 
     elif team_num == 5:
-        # Store 5: Pd A/P 123,222, Loan 27,791, 90 HRS!
-        inp[0] = 50; inp[1] = 2.7
-        inp[6] = 90 # CRAZY HOURS
-        inp[7] = 2200
-        inp[13] = 33
-        inp[18] = 20.00
-        inp[20] = 4.75
-        inp[28] = 123222 # BIG PAYMENT -> LOAN
-        inp[23] = 2000
+        # High Hours (90), Low Price -> High OTC
+        inp[0] = 50; inp[1] = 2.7; inp[6] = 90; inp[7] = 2200; inp[13] = 33
+        inp[18] = 20.00; inp[20] = 4.75; inp[28] = 123222; inp[23] = 2000
+        inp[14] = 50000; inp[15] = 80000; inp[21]=3000
 
     elif team_num == 6:
-        # Store 6: Pd A/P 102,000, Loan 0
-        inp[0] = 50; inp[1] = 3.0
-        inp[6] = 75
-        inp[7] = 3000
-        inp[13] = 37
-        inp[18] = 22.00
-        inp[20] = 5.12
-        inp[28] = 102000
-        inp[23] = 1300
+        inp[0] = 50; inp[1] = 3.0; inp[6] = 75; inp[7] = 3000; inp[13] = 37
+        inp[18] = 22.00; inp[20] = 5.12; inp[28] = 102000; inp[23] = 1300
+        inp[14] = 70000; inp[15] = 80000; inp[21]=3000
 
     elif team_num == 7:
-        # Store 7: Pd A/P 32,444
-        inp[0] = 50; inp[1] = 5.5
-        inp[6] = 48
-        inp[7] = 600
-        inp[13] = 55 # High Markup
-        inp[18] = 19.75
-        inp[20] = 4.90
-        inp[28] = 32444
-        inp[23] = 900
-
-    # Fill common reasonable defaults for others
-    if inp[14] == 0: inp[14] = 45000 # Rx Purchase
-    if inp[15] == 0: inp[15] = 20000 # OTC Purchase
-    if inp[17] == 0: inp[17] = 2.0 # Pharmacists
-    if inp[19] == 0: inp[19] = 2.0 # Clerks
-    inp[21] = 3000 # Mgr Salary
+        inp[0] = 50; inp[1] = 5.5; inp[6] = 48; inp[7] = 600; inp[13] = 55
+        inp[18] = 19.75; inp[20] = 4.90; inp[28] = 32444; inp[23] = 900
+        inp[14] = 60000; inp[15] = 15000; inp[21]=3000
 
     return inp
 
@@ -218,8 +163,6 @@ def initialize_hardcoded_scenario():
     
     for s in scenarios:
         team_num = int(s['id'].split('_')[1])
-        
-        # Calculate Equity
         total_assets = s['cash'] + s['inv_rx'] + s['inv_otc'] + s['fix_asset'] + s['ar']
         total_liab = s['ap'] + s['mortgage']
         equity = total_assets - total_liab 
@@ -232,7 +175,6 @@ def initialize_hardcoded_scenario():
             'acct_payable': s['ap'], 'notes_payable': 0, 'long_term_debt': s['mortgage'], 
             'retained_earnings': equity
         }
-        
         prev_stats = { 
             'avg_price': s['prev_price'], 'mkt_share': s['prev_share'], 
             'rx_per_hr': 6.0, 'otc_markup': 45.0, 'ad_index': 1.0
@@ -248,7 +190,6 @@ def initialize_hardcoded_scenario():
 # ==========================================
 # 4. LOGIC ENGINE
 # ==========================================
-
 def calculate_results():
     rx_w_df = st.session_state.rx_weights_df
     otc_w_df = st.session_state.otc_weights_df
@@ -257,7 +198,9 @@ def calculate_results():
     BASE_COST_RX = mkt[0]; PCT_3RD_PARTY = mkt[3] / 100.0
     MAX_AD_EXP = mkt[4]; INT_RATE_LOAN = mkt[8]/100.0
     AVG_RX_VOL = mkt[9]; AVG_OTC_VOL = mkt[10]
-    SLIPPAGE_RATE = mkt[11]/100.0; WEEKS_PER_PERIOD = 52 / mkt[12] if mkt[12] > 0 else 13
+    SLIPPAGE_RATE = mkt[11]/100.0
+    periods_per_year = max(0.1, mkt[12])
+    WEEKS_PER_PERIOD = min(52, 52 / periods_per_year)
     LAG_AR = mkt[14]/100.0; INFLATION = mkt[19]/100.0
     STOCKOUT_PENALTY_RX = mkt[20]/100.0; STOCKOUT_PENALTY_OTC = mkt[21]/100.0
     
@@ -266,23 +209,31 @@ def calculate_results():
     num_stores = len(active_stores)
     if num_stores == 0: return
 
-    # Ranking & Market Share
+    FIXED_RENT_RATE = {k: v * (1 + INFLATION) for k, v in LOC_RENT_RATE.items()}
+    total_rph_wage = sum([p['inputs'][18] for p in active_stores])
+    avg_rph_wage = total_rph_wage / num_stores if num_stores else 25.0
+
     ranking_data = []
     for p in active_stores:
-        inp = p['inputs']
+        inp = p['inputs']; fin = p['financials']
         if inp[0] < 10: rx_price = BASE_COST_RX + inp[0] + inp[1]
         else: rx_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1]
             
         ad_factor = (inp[7] / MAX_AD_EXP) + (p['prev_stats'].get('ad_index', 1.0) * 0.5)
         curr_ad_index = min(2.0, (0.84 * ad_factor) - (0.16 * (ad_factor ** 2)))
-        
+        p['curr_ad_index'] = curr_ad_index
+
+        ben_factor = 1.0 + (0.05 if inp[32] else 0) + (0.10 if inp[33] else 0)
+        real_wage = inp[18] * ben_factor
+        eff_rph = inp[17] if real_wage >= (0.9 * avg_rph_wage) else max(0.5, inp[17] * 0.8)
+        p['eff_rph_val'] = eff_rph
+
         ranking_data.append({
             'id': p['id'], 'loc': p['location_code'],
             'price': rx_price, 'pastprice': p['prev_stats'].get('avg_price', 15.0),
             'promo': curr_ad_index, 'hours': inp[6],
             'delivery': inp[3], 'records': inp[4], 'credit': inp[5],
-            'inventory': p['financials']['inventory_rx'], 
-            'inv_otc': p['financials']['inventory_otc'],
+            'inventory': fin['inventory_rx'], 'inv_otc': fin['inventory_otc'],
             'prev_share': p['prev_stats']['mkt_share'], 
             'efficiency': p['prev_stats'].get('rx_per_hr', 6.0),
             'otc_markup': inp[13], 'prev_otc_markup': p['prev_stats'].get('otc_markup', 45.0)
@@ -314,11 +265,8 @@ def calculate_results():
         tid = row['id']; loc_name = LOC_MAP[row['loc']]
         w_rx = rx_w_df.set_index("Factor")[loc_name]
         score_rx = sum([row[f'R_{c}'] * w_rx[c] for c in ['Price','PastPrice','Promo','Hours','Delivery','Records','Credit','Inventory','MktShare','Efficiency']])
-        
-        # Price Sensitivity Adjustment
         if row['price'] > avg_mkt_price * 1.05: score_rx *= 0.8
         if row['price'] < avg_mkt_price * 0.95: score_rx *= 1.2
-        
         rx_scores[tid] = score_rx; total_rx_score += score_rx
 
         w_otc = otc_w_df.set_index("Factor")[loc_name]
@@ -328,21 +276,18 @@ def calculate_results():
     total_rx_mkt_vol = AVG_RX_VOL * num_stores
     total_otc_mkt_vol = AVG_OTC_VOL * num_stores
 
-    # FINANCIAL PROCESSING
     for p in active_stores:
         tid = p['id']; inp = p['inputs']; fin = p['financials']
-        
-        # 1. Sales Calculation
         my_rx_share_raw = rx_scores[tid] / total_rx_score
         my_otc_share_raw = otc_scores[tid] / total_otc_score
-        
         loc_type = LOC_MAP[p['location_code']]
+        
         base_rx_vol = total_rx_mkt_vol * my_rx_share_raw
         if loc_type == "Medical Center": base_rx_vol *= 1.15
         elif loc_type == "Shopping Center": base_rx_vol *= 0.85
         
         base_otc_sales = total_otc_mkt_vol * my_otc_share_raw
-        if loc_type == "Shopping Center": base_otc_sales *= 2.8
+        if loc_type == "Shopping Center": base_otc_sales *= 1.35
         elif loc_type == "Medical Center": base_otc_sales *= 0.15
         
         unit_price = (BASE_COST_RX * (1 + inp[0]/100)) + inp[1] if inp[0] > 10 else BASE_COST_RX + inp[0] + inp[1]
@@ -356,7 +301,6 @@ def calculate_results():
         total_otc_rev = base_otc_sales
         total_rev = total_rx_rev + total_otc_rev
         
-        # 2. Inventory & COGS
         rx_cogs_base = base_rx_vol * BASE_COST_RX
         rx_slippage = total_rx_rev * SLIPPAGE_RATE
         rx_cogs_total = rx_cogs_base + rx_slippage
@@ -365,74 +309,61 @@ def calculate_results():
         otc_slippage = total_otc_rev * SLIPPAGE_RATE * 1.2
         otc_cogs_total = otc_cogs_base + otc_slippage
         
-        # Emergency Purchase Check
         req_rx = rx_cogs_total; avail_rx = fin['inventory_rx'] + inp[14]
-        emer_rx = max(0, req_rx - avail_rx) # Only needed if demand > avail
+        emer_rx = max(0, req_rx - avail_rx)
         emer_rx_cost = emer_rx * (1 + STOCKOUT_PENALTY_RX)
-        
         req_otc = otc_cogs_total; avail_otc = fin['inventory_otc'] + inp[15]
         emer_otc = max(0, req_otc - avail_otc)
         emer_otc_cost = emer_otc * (1 + STOCKOUT_PENALTY_OTC)
 
-        actual_cogs_rx = rx_cogs_total
-        actual_cogs_otc = otc_cogs_total
+        actual_cogs_rx = rx_cogs_total; actual_cogs_otc = otc_cogs_total
         
-        # 3. Expenses
         wage_rph = (inp[17] * 40 * WEEKS_PER_PERIOD * inp[18])
         rph_ot_cost = 0 
-        # Simple OT: if vol > capacity
-        if base_rx_vol > (inp[17] * 40 * 13 * 6): 
-             rph_ot_cost = (base_rx_vol - (inp[17] * 240 * 13)) * inp[18] * 1.5
-
+        if base_rx_vol > (inp[17] * 40 * 13 * 6): rph_ot_cost = (base_rx_vol - (inp[17] * 240 * 13)) * inp[18] * 1.5
         wage_clk = (inp[19] * 40 * WEEKS_PER_PERIOD * inp[20])
-        clk_ot_cost = 0 # Simplify for now
-
+        clk_ot_cost = 0 
         total_wages = wage_rph + rph_ot_cost + wage_clk + clk_ot_cost
         
         mgr_salary = inp[21] * (52/12)
         rent = total_rev * LOC_RENT_RATE.get(p['location_code'], 0.03)
-        utilities = 3000 * (inp[6]/50) # Scale by hours
+        utilities = 3000 * (inp[6]/50) 
         promo = inp[7]
-        mortgage_pay = inp[23] * 12 # Annualize for period? Or just raw input. Let's use input.
-        if mortgage_pay < 1000: mortgage_pay *= 3 # Adjustment if user put monthly
+        mortgage_pay = inp[23] * 12 
+        if mortgage_pay < 1000: mortgage_pay *= 3 
         
-        other_exp = total_rev * 0.02 # Misc
-        
+        other_exp = total_rev * 0.02 
         total_opex = total_wages + mgr_salary + rent + utilities + promo + mortgage_pay + other_exp
         gross_margin = total_rev - (actual_cogs_rx + actual_cogs_otc)
         
-        # 4. Cash Flow & Loan Logic
         cash_start = fin['cash']
         cash_sales = total_rev * 0.35
-        ar_collection = fin['acct_receivable'] # Collect old AR
+        ar_collection = fin['acct_receivable'] 
         cash_in = cash_sales + ar_collection
         
-        ap_payment = inp[28] # This is the Killer Input
+        ap_payment = inp[28] 
         purchases = inp[14] + inp[15] + emer_rx_cost + emer_otc_cost
         
-        # Cash Out: A/P Payment + OPEX + Cash Purchases (if any, usually Credit)
-        # Assuming purchases go to A/P, so we pay A/P + OPEX
+        # Accounting Fix: Only AP Payment + Opex goes out. Purchases go to AP.
         cash_out = ap_payment + total_opex 
         
         net_cash_flow = cash_in - cash_out
         fin['cash'] += net_cash_flow
         
-        # EMERGENCY LOAN TRIGGER
         eloan = 0
         min_cash_req = inp[25]
         if fin['cash'] < min_cash_req:
             eloan = min_cash_req - fin['cash']
-            fin['cash'] = min_cash_req # Reset to min
-            fin['notes_payable'] += eloan # Add to loan
+            fin['cash'] = min_cash_req 
+            fin['notes_payable'] += eloan 
         
-        # 5. Balance Sheet Updates
         fin['inventory_rx'] = (fin['inventory_rx'] + inp[14] + emer_rx) - actual_cogs_rx
         fin['inventory_otc'] = (fin['inventory_otc'] + inp[15] + emer_otc) - actual_cogs_otc
         
         new_ar = total_rev * 0.65
         fin['acct_receivable'] = new_ar
         
-        # New A/P = Old A/P - Payment + New Purchases
+        # AP Logic: Start AP - Payment + New Purchases
         fin['acct_payable'] = (fin['acct_payable'] - ap_payment) + purchases
         
         interest_exp = (fin['notes_payable'] + fin['long_term_debt']) * (INT_RATE_LOAN / 4)
@@ -443,12 +374,11 @@ def calculate_results():
         total_liab = fin['acct_payable'] + fin['notes_payable'] + fin['long_term_debt']
         net_worth = total_assets - total_liab
 
-        # Report Construction
         report = {
             "TOT SALES": total_rev, "Rx SALES": total_rx_rev, "OTH SALES": total_otc_rev,
             "Avg Rx Pr": unit_price, "Rx Ing $": BASE_COST_RX,
             "Rx GM%": ((total_rx_rev - actual_cogs_rx)/total_rx_rev) if total_rx_rev else 0,
-            "3-Pty GM%": 0.30, # Approx
+            "3-Pty GM%": 0.30, 
             "Tot #Rx's": base_rx_vol, "3-Pty #Rx": vol_3rd, "Copay Dis": inp[2], "OTC M'kup": inp[13]/100,
             "Rx Mkt Sh": my_rx_share_raw, "Store Hrs": inp[6], "A/P Paid": inp[28], "M'age Pay": inp[23],
             "Loan": fin['notes_payable'], "Mgr Hrs": 48, "RP OverT": rph_ot_cost,
@@ -464,7 +394,6 @@ def calculate_results():
             "RATIO: Debt/NW": (total_liab / net_worth) if net_worth else 0,
             "LOCATION": p['location_code']
         }
-        
         p['history'].append(report)
         p['status'] = 'Pending'; p['period'] += 1
         p['prev_stats']['avg_price'] = unit_price
@@ -477,8 +406,8 @@ def calculate_results():
 # 5. UI COMPONENTS
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V36.25")
-    st.caption("Calibrated with outputc1p1 Data")
+    st.title("💊 Communi-Pharm V36.4")
+    st.caption("Historical Inputs Match")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def generate_master_report(players):
@@ -486,7 +415,7 @@ def generate_master_report(players):
     for p_id, p in players.items():
         if not p['history']: continue
         last = p['history'][-1]
-        data[f"{p['id'].split('_')[1]}"] = last # Col name = Store Num
+        data[f"{p['id'].split('_')[1]}"] = last 
     if not data: return pd.DataFrame()
     df = pd.DataFrame(data)
     df = df.reindex(REPORT_ORDER)
@@ -496,25 +425,22 @@ def render_instructor_ui():
     st.header("👨‍🏫 Instructor Dashboard")
     
     if st.session_state.game_state == "SETUP_STEP_1":
-        st.info("Click below to load the Calibrated Scenario (Matched to outputc1p1.txt).")
-        if st.button("🚀 Initialize Calibrated Scenario", type="primary"):
+        st.info("Load Historical Scenario.")
+        if st.button("🚀 Initialize Scenario", type="primary"):
             initialize_hardcoded_scenario()
-            st.success("Teams initialized with Historical Inputs.")
+            st.success("Teams initialized.")
             st.session_state.game_state="ACTIVE"
             st.rerun()
     
     elif st.session_state.game_state == "ACTIVE":
         st.success(f"### 🏁 Period {st.session_state.global_period - 1} Results")
-        
         if any(p['history'] for p in st.session_state.players.values()):
             df = generate_master_report(st.session_state.players)
             if not df.empty:
                 st.dataframe(df.style.format(lambda x: "{:,.2f}".format(x) if isinstance(x, (int, float)) else str(x)), height=800, use_container_width=True)
-        
         st.divider()
         c1, c2 = st.columns([3,1])
         c1.metric("Status", f"{sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')}/{len(st.session_state.players)} Teams Ready")
-        
         if c2.button("⚙️ Setup Next Period", type="primary"):
             st.session_state.game_state = "MARKET_EDIT_RUN"
             st.rerun()
