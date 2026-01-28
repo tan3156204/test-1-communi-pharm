@@ -7,7 +7,7 @@ import re
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V36.11 (Hybrid)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V36.12 (Crash Fixed)", layout="wide")
 
 st.markdown("""
 <style>
@@ -57,11 +57,11 @@ MARKET_LABELS = [
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
 LOC_RENT_RATE = {1: 0.045, 2: 0.030, 3: 0.025}
 
-# --- WEIGHTS (V36.9 Logic - Store 3 Tuned) ---
+# --- WEIGHTS (V36.9 Logic) ---
 RX_DEFAULT = {
     "Factor": ["PastPrice", "Price", "Promo", "Hours", "Delivery", "Records", "Credit", "Inventory", "MktShare", "Efficiency"],
     "Medical Center":    [5, 20, 11, 7, 10, 15, 3, 10, 15, 6], 
-    "Neighborhood":      [5, 45, 13, 11, 6, 8, 2, 11, 10, 6],  # High Price Sensitivity
+    "Neighborhood":      [5, 45, 13, 11, 6, 8, 2, 11, 10, 6],  
     "Shopping Center":   [5, 20, 15, 12, 1, 1, 1, 10, 5, 10]
 }
 
@@ -97,40 +97,34 @@ if 'otc_weights_df' not in st.session_state: st.session_state.otc_weights_df = p
 
 def restructure_financials(s):
     """Common logic to fix Net Worth for any parser"""
-    # 1. Assets (Reliable)
-    # If Fix Asset is missing or too low, estimate from Mortgage or Default
+    # 1. Assets
     if s.get('fix_asset', 0) < 10000: 
         s['fix_asset'] = max(50000.0, s.get('lt_debt', 0) * 1.25)
-        
-    # If AR is missing, estimate
     if s.get('ar', 0) < 1000:
         s['ar'] = 35000.0
 
     total_assets = s['cash'] + s['ar'] + s['inv_rx'] + s['inv_otc'] + s['fix_asset']
     
-    # 2. Liabilities (Estimate if missing/wrong, or keep from CSV)
-    # Notes Payable (Emergency Loan) - Trust CSV/Text if logical, else 0
-    if s.get('notes_pay', 0) > 1000000: s['notes_pay'] = 0.0 # Fix glitch
+    # 2. Liabilities
+    if s.get('notes_pay', 0) > 1000000: s['notes_pay'] = 0.0 
     
-    # AP - Trust or Estimate
     if s.get('ap', 0) > 1000000 or s.get('ap', 0) == 0: 
         s['ap'] = (s['inv_rx'] + s['inv_otc']) * 0.45
         
-    # LT Debt - Trust or Estimate
     if s.get('lt_debt', 0) > 1000000 or s.get('lt_debt', 0) == 0:
         s['lt_debt'] = s['fix_asset'] * 0.60
 
     total_liab = s['ap'] + s['notes_pay'] + s['lt_debt']
     
-    # 3. Equity (Force Balance) -> Assets - Liab = Equity
+    # 3. Equity (Force Balance)
     s['retained'] = total_assets - total_liab
     
     return s
 
 def parse_text_scenario(file_content):
-    """[RESTORED] V36.9 Regex Parser for Text Files"""
+    """Parses text/p1 files with regex cleaning"""
     try:
-        # Regex Cleaning for sticky numbers
+        # Clean potential sticky numbers (e.g. 1000.00-500.00)
         cleaned_content = re.sub(r'(?<=\d)-(?=\d)', ' -', file_content)
         cleaned_content = cleaned_content.replace('\n', ' ').replace('\r', ' ')
         tokens = []
@@ -160,21 +154,33 @@ def parse_text_scenario(file_content):
     return stores_data
 
 def parse_csv_scenario(file_obj):
-    """[NEW] V36.10 Parser for Excel/CSV Files"""
+    """Safely parses CSV/Excel files using pandas"""
     try:
+        # Load without header to access by index
         df = pd.read_csv(file_obj, header=None)
         stores_data = []
-        for i in range(1, 8): # Cols 1-7
+        
+        # Determine number of columns to check (usually col 1 to 7 for 7 stores)
+        num_cols = min(df.shape[1], 8)
+        
+        for i in range(1, num_cols): 
             try:
-                def get_val(r): return float(str(df.iloc[r, i]).replace(',', ''))
+                def get_val(r): 
+                    try:
+                        val_str = str(df.iloc[r, i]).replace(',', '').strip()
+                        return float(val_str)
+                    except:
+                        return 0.0
                 
                 s = {
                     'prev_price': get_val(1), 
                     'cash': get_val(3),
                     'inv_rx': get_val(4), 'inv_otc': get_val(5),
                     'notes_pay': get_val(6), 'lt_debt': get_val(7),
-                    'prev_share': get_val(17) * 100 if get_val(17) < 1 else get_val(17)
+                    'prev_share': get_val(17)
                 }
+                if s['prev_share'] < 1.0: s['prev_share'] *= 100
+                
                 # Location Mapping
                 if i in [1, 7]: s['loc_code'] = 1
                 elif i in [2, 3, 4]: s['loc_code'] = 2
@@ -220,7 +226,6 @@ def initialize_teams(scenarios):
         }
 
 def initialize_teams_manual(num_teams):
-    # Create dummy scenario data for manual init
     dummy_data = []
     for i in range(num_teams):
         dummy_data.append(restructure_financials({
@@ -231,7 +236,7 @@ def initialize_teams_manual(num_teams):
     initialize_teams(dummy_data)
 
 # ==========================================
-# 4. LOGIC ENGINE (V36.9 TUNED)
+# 4. LOGIC ENGINE
 # ==========================================
 def generate_master_report(players):
     data = []
@@ -368,10 +373,10 @@ def calculate_results():
                    (row['R_Credit'] * w_rx['Credit']) + (row['R_Inventory'] * w_rx['Inventory']) + \
                    (row['R_Share'] * w_rx['MktShare']) + (row['R_Eff'] * w_rx['Efficiency'])
         
-        # --- [LOGIC TUNING] ---
-        if row['price'] < 19.00: score_rx *= 1.35 # Store 3 Bonus
+        # --- LOGIC TUNING ---
+        if row['price'] < 19.00: score_rx *= 1.35
         elif row['price'] < avg_mkt_price: score_rx *= 1.05
-        if loc_name == "Medical Center": score_rx *= 0.80 # Store 7 Dampener
+        if loc_name == "Medical Center": score_rx *= 0.80
 
         if st.session_state.players[tid]['inputs'][33]: score_rx *= 1.05
         rx_scores[tid] = score_rx; total_rx_score += score_rx
@@ -387,7 +392,6 @@ def calculate_results():
         rx_shares[tid_str] = rx_scores[tid_str] / total_rx_score if total_rx_score > 0 else 1.0/num_stores
         otc_shares[tid_str] = otc_scores[tid_str] / total_otc_score if total_otc_score > 0 else 1.0/num_stores
 
-    # --- OPERATIONS ---
     total_rx_mkt = (AVG_RX_VOL * num_stores) * 1.05 
     total_otc_mkt = (AVG_OTC_VOL * num_stores) * 1.05
     
@@ -398,10 +402,9 @@ def calculate_results():
         base_rx_vol = total_rx_mkt * my_rx_share
         hmo_vol = (200 / len(hmo_winners)) if tid in hmo_winners else 0
         
-        # --- [LOGIC] Shopping Center OTC Boost ---
         if LOC_MAP[p['location_code']] == "Shopping Center":
             base_rx_vol *= 0.70 
-            total_otc_sales = (total_otc_mkt * my_otc_share) * 2.2 # Adjusted to 2.2
+            total_otc_sales = (total_otc_mkt * my_otc_share) * 2.2 
         else:
             total_otc_sales = (total_otc_mkt * my_otc_share)
 
@@ -431,7 +434,6 @@ def calculate_results():
         capacity_rx = (p['eff_rph'] * 40 * WEEKS_PER_PERIOD) * std_rate
         rph_ot_hours = max(0, (total_rx_vol - capacity_rx) / std_rate)
         
-        # --- FINANCIALS ---
         wage_rph = (p['eff_rph'] * 40 * WEEKS_PER_PERIOD * inp[18]) + (rph_ot_hours * inp[18] * 1.5)
         wage_clk = (p['eff_clk'] * 40 * WEEKS_PER_PERIOD * inp[20])
         total_wages = wage_rph + wage_clk
@@ -506,26 +508,50 @@ def calculate_results():
 # 5. UI COMPONENTS
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V36.11")
-    st.caption("Hybrid (CSV/Text) + Financial Sync")
+    st.title("💊 Communi-Pharm V36.12")
+    st.caption("Crash Fixed + Safe Loader")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def render_instructor_ui():
     st.header("👨‍🏫 Instructor Dashboard")
+    
     if st.session_state.game_state == "SETUP_STEP_1":
         st.markdown("### Step 1: Initialize Teams")
         with st.expander("Manual Setup"):
             n = st.number_input("Number of Teams", 1, 20, 5)
             if st.button("Create Teams"): initialize_teams_manual(n); st.session_state.game_state="SETUP_STEP_2"; st.rerun()
+
         with st.expander("Load Scenario File", expanded=True):
             f = st.file_uploader("Upload HISTC1.P1 or CSV", type=None)
             if st.button("Load & Create") and f:
-                content = f.getvalue().decode("utf-8")
-                scenarios = parse_csv_scenario(f) if "csv" in f.name.lower() else parse_text_scenario(content)
-                if scenarios: initialize_teams(scenarios); st.success(f"Loaded {len(scenarios)} stores."); st.session_state.game_state="SETUP_STEP_2"; st.rerun()
+                scenarios = []
+                try:
+                    # [FIX]: Check file type before reading
+                    if "csv" in f.name.lower():
+                        f.seek(0)
+                        scenarios = parse_csv_scenario(f)
+                    else:
+                        # Safe text decoding for .p1 or .txt
+                        try:
+                            content = f.getvalue().decode("utf-8")
+                        except:
+                            content = f.getvalue().decode("cp1252", errors='ignore')
+                        scenarios = parse_text_scenario(content)
+                        
+                    if scenarios: 
+                        initialize_teams(scenarios)
+                        st.success(f"Loaded {len(scenarios)} stores.")
+                        st.session_state.game_state="SETUP_STEP_2"
+                        st.rerun()
+                    else:
+                        st.error("Could not parse file. Please check format.")
+                except Exception as e:
+                    st.error(f"Error processing file: {e}")
+
     elif st.session_state.game_state == "SETUP_STEP_2":
-        st.markdown("### Step 2: Ready"); st.write("Ready to Start."); 
+        st.markdown("### Step 2: Check Configuration"); st.write("Ready."); 
         if st.button("Start Game"): st.session_state.game_state="ACTIVE"; st.rerun()
+    
     elif st.session_state.game_state == "ACTIVE":
         st.success(f"### 🏁 Period {st.session_state.global_period - 1} Results")
         if any(p['history'] for p in st.session_state.players.values()):
@@ -533,6 +559,7 @@ def render_instructor_ui():
             if not df.empty: st.dataframe(df.style.format(lambda x: "{:,.2f}".format(x) if isinstance(x, (int, float)) else str(x)), height=600, use_container_width=True)
         st.divider(); c1, c2 = st.columns([3,1]); c1.metric("Ready", f"{sum(1 for p in st.session_state.players.values() if p['status']=='Submitted')}/{len(st.session_state.players)}")
         if c2.button("⚙️ Setup Next"): st.session_state.game_state="MARKET_EDIT_RUN"; st.rerun()
+
     elif st.session_state.game_state == "MARKET_EDIT_RUN":
         st.markdown("### 🚨 Market Environment"); df_mkt = pd.DataFrame({"Variable": MARKET_LABELS, "Value": st.session_state.market_data_list}); ed = st.data_editor(df_mkt, height=600, use_container_width=True)
         c1, c2 = st.columns(2)
