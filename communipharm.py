@@ -2,11 +2,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import math
+import re
 
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V36.14 (Hardcoded Data)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V36.15 (Final Fix)", layout="wide")
 
 st.markdown("""
 <style>
@@ -308,7 +309,7 @@ def calculate_results():
         
         ranking_data.append({
             'id': tid, 'loc': p['location_code'],
-            'price': rx_price, 'past_price': prev.get('avg_price', 15.0),
+            'price': rx_price, 'pastprice': prev.get('avg_price', 15.0), # [FIXED KEY ERROR]
             'promo': p['curr_ad_index'], 'hours': inp[6],
             'delivery': inp[3], 'records': inp[4], 'credit': inp[5],
             'inventory': fin['inventory_rx'], 'inv_otc': fin['inventory_otc'],
@@ -326,7 +327,12 @@ def calculate_results():
         cols = ['Price', 'PastPrice', 'Promo', 'Hours', 'Delivery', 'Records', 'Credit', 'Inventory', 'Share', 'Eff']
         asc = [True, True, False, False, False, False, False, False, False, False]
         for c, a in zip(cols, asc):
-            df_comp[f'R_{c}'] = get_points(df_comp[c.lower().replace('share', 'prev_share').replace('eff', 'efficiency')] if c!='Share' else df_comp['prev_share'], a)
+            # [FIXED KEY MAPPING]
+            target_col = c.lower().replace('share', 'prev_share').replace('eff', 'efficiency').replace('pastprice', 'pastprice') 
+            if c != 'Share':
+                df_comp[f'R_{c}'] = get_points(df_comp[target_col], a)
+            else:
+                df_comp[f'R_{c}'] = get_points(df_comp['prev_share'], a)
 
         df_comp['RO_Markup'] = get_points(df_comp['otc_markup'], True)
         df_comp['RO_PrevMarkup'] = get_points(df_comp['prev_otc_markup'], True)
@@ -477,8 +483,8 @@ def calculate_results():
 # 5. UI COMPONENTS
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V36.14")
-    st.caption("Hardcoded Clean Data")
+    st.title("💊 Communi-Pharm V36.15")
+    st.caption("Hardcoded Data + Fixes")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def render_instructor_ui():
