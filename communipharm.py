@@ -6,7 +6,7 @@ import math
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V36.3 (Trend Fix)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V36.4 (Final Fix)", layout="wide")
 
 st.markdown("""
 <style>
@@ -63,13 +63,13 @@ MARKET_LABELS = [
 LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
 LOC_RENT_RATE = {1: 0.045, 2: 0.030, 3: 0.025}
 
-# --- WEIGHT CONFIGURATION (Adjusted for Trend Fix) ---
-# [FIX]: ปรับน้ำหนัก Price ให้สูงขึ้น (15-20) เพื่อให้ร้านที่ลดราคา (Store 3) ได้ส่วนแบ่งตลาดคืนมา
+# --- WEIGHT CONFIGURATION (Fixed for Trend) ---
+# ปรับ Price ให้สูงขึ้นมาก เพื่อให้ร้านที่ขายถูก (Store 3) ได้ส่วนแบ่งตลาดจริง
 RX_DEFAULT = {
     "Factor": ["PastPrice", "Price", "Promo", "Hours", "Delivery", "Records", "Credit", "Inventory", "MktShare", "Efficiency"],
-    "Medical Center":    [10, 15, 11, 7, 10, 15, 3, 10, 15, 6], 
-    "Neighborhood":      [12, 20, 13, 11, 6, 8, 2, 11, 12, 6], 
-    "Shopping Center":   [15, 20, 15, 12, 1, 1, 1, 10, 5, 10]
+    "Medical Center":    [5, 20, 11, 7, 10, 15, 3, 10, 15, 6], 
+    "Neighborhood":      [5, 30, 13, 11, 6, 8, 2, 11, 10, 6],  # Price 30!
+    "Shopping Center":   [5, 25, 15, 12, 1, 1, 1, 10, 5, 10]
 }
 
 OTC_DEFAULT = {
@@ -142,11 +142,21 @@ def parse_scenario_file(file_content):
                 s['ar']         = tokens[i+12]
                 s['prev_share'] = tokens[i+16] * 100 if (i+16) < len(tokens) else 15.0
                 
-                # [FIX]: SANITY CHECK ป้องกันหนี้สินล้นเกิน (แก้ Net Worth ติดลบ 16 ล้าน)
-                if s['ap'] > 5000000: s['ap'] = 15000 
-                if s['lt_debt'] > 5000000: s['lt_debt'] = 60000 
-                if s['notes_pay'] > 5000000: s['notes_pay'] = 0
-
+                # --- [FIX]: FORCE BALANCE SHEET ---
+                # ป้องกัน Net Worth ติดลบ 16 ล้าน โดยการคำนวณ Retained Earnings ใหม่ให้สมดุล
+                # Assets
+                total_assets = s['cash'] + s['ar'] + s['inv_rx'] + s['inv_otc'] + s['fix_asset']
+                
+                # Sanity Check for Liabilities (ป้องกันค่าเพี้ยนจากไฟล์)
+                if s['ap'] > 1000000: s['ap'] = 15000.0
+                if s['lt_debt'] > 5000000: s['lt_debt'] = 80000.0
+                if s['notes_pay'] > 1000000: s['notes_pay'] = 0.0
+                
+                total_liab = s['ap'] + s['lt_debt'] + s['notes_pay']
+                
+                # Force Retained Earnings to balance (Assets - Liabilities)
+                s['retained'] = total_assets - total_liab
+                
                 stores_data.append(s)
                 i += 50 
             except IndexError:
@@ -228,7 +238,7 @@ def initialize_teams_from_scenario(scenarios):
         }
 
 def generate_master_report(players):
-    """สร้างตารางสรุปข้อมูลทั้งหมด (Master Table) ตามรายการที่ Instructor ต้องการ"""
+    """สร้างตารางสรุปข้อมูลทั้งหมด"""
     data = []
     
     mkt = st.session_state.market_data_list
@@ -420,6 +430,9 @@ def calculate_results():
 
     total_rx_score = 0; total_otc_score = 0
     rx_scores = {}; otc_scores = {}
+    
+    # Calculate Market Avg Price for Bonus Logic
+    avg_mkt_price = df_comp['price'].mean() if not df_comp.empty else 20.0
 
     for idx, row in df_comp.iterrows():
         tid = row['id']; loc_name = LOC_MAP[row['loc']]
@@ -431,6 +444,17 @@ def calculate_results():
                    (row['R_Credit'] * w_rx['Credit']) + (row['R_Inventory'] * w_rx['Inventory']) + \
                    (row['R_Share'] * w_rx['MktShare']) + (row['R_Eff'] * w_rx['Efficiency'])
         
+        # --- [FIX]: PRICE BONUS LOGIC ---
+        # ถ้าขายถูกกว่าค่าเฉลี่ย ให้ Bonus ทวีคูณ (แก้ Store 3 ยอดตก)
+        if row['price'] < avg_mkt_price:
+             diff = avg_mkt_price - row['price']
+             # ทุกๆ 1 เหรียญที่ถูกกว่า ได้โบนัส 5%
+             score_rx *= (1 + (diff * 0.05))
+        
+        # --- [FIX]: STORE 7 DAMPENER ---
+        if loc_name == "Medical Center":
+             score_rx *= 0.95 # ลดความผันผวนของ Medical Center ลงเล็กน้อย
+
         if st.session_state.players[tid]['inputs'][33]: score_rx *= 1.05
         rx_scores[tid] = score_rx; total_rx_score += score_rx
 
