@@ -661,22 +661,16 @@ def render_instructor_ui():
     elif st.session_state.game_state == "ACTIVE":
         st.success(f"### 🏁 Period {st.session_state.global_period - 1} Results")
         
-        # [NEW] เรียกใช้ Master Report แทนตารางเดิม
+        # [จุดที่เคย Error] ต้องย่อหน้าเข้ามาอยู่ใต้ elif
         if any(p['history'] for p in st.session_state.players.values()):
             df_report = generate_master_report(st.session_state.players)
             if not df_report.empty:
-                # [NEW] เรียกใช้ Master Report (แก้ Error formatting)
-        if any(p['history'] for p in st.session_state.players.values()):
-            df_report = generate_master_report(st.session_state.players)
-            if not df_report.empty:
-                # ใช้ Lambda Function เช็คก่อนว่าค่าเป็นตัวเลขไหม ถ้าใช่ค่อยจัด Format
+                # ใช้ lambda เพื่อป้องกัน Error formatting
                 st.dataframe(
                     df_report.style.format(lambda x: "{:,.2f}".format(x) if isinstance(x, (int, float)) else str(x)), 
                     height=600, 
                     use_container_width=True
                 )
-            else:
-                st.warning("No data available yet.")
             else:
                 st.warning("No data available yet.")
         
@@ -783,4 +777,5 @@ role = st.sidebar.selectbox("Role", ["Student", "Instructor"])
 if role == "Instructor":
     if st.sidebar.text_input("Pwd", type="password") == ADMIN_PASSWORD: render_instructor_ui()
 else: render_student_ui()
+
 
