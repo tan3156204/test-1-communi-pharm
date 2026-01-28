@@ -5,13 +5,14 @@ import numpy as np
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V37.3 (Logic Locked)", layout="wide")
+st.set_page_config(page_title="Communi-Pharm V37.4 (Sanitized)", layout="wide")
 
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; }
     .report-table { font-family: 'Courier New', monospace; font-size: 0.85em; }
-    .debug-box { background-color: #ffcccc; padding: 10px; border-radius: 5px; color: #cc0000; font-weight: bold; }
+    .debug-box { background-color: #e6fffa; padding: 10px; border-radius: 5px; color: #006600; font-weight: bold; border: 1px solid #00cc00; }
+    .alert-box { background-color: #ffcccc; padding: 10px; border-radius: 5px; color: #cc0000; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -89,7 +90,8 @@ if 'game_state' not in st.session_state:
     st.session_state.game_state = "SETUP_STEP_1"
     st.session_state.global_period = 1
     st.session_state.players = {}
-    st.session_state.debug_logs = [] # [NEW] Debug Storage
+    st.session_state.debug_logs = []
+    st.session_state.sanity_check_log = [] # New log for fixed inputs
 
 if 'market_data_list' not in st.session_state:
     st.session_state.market_data_list = list(DEFAULT_MARKET_DATA)
@@ -105,7 +107,7 @@ def get_hisc1p1_data():
         {'id': 'team_1', 'loc': 1, 'prev_price': 22.02, 'prev_share': 11.78, 'cash': 7423.15, 'inv_rx': 59918, 'inv_otc': 12322, 'ap': 60889, 'mortgage': 50000, 'fix_asset': 32344, 'ar': 13211, 'notes_pay': 0},
         {'id': 'team_2', 'loc': 2, 'prev_price': 18.54, 'prev_share': 13.17, 'cash': 2500.0, 'inv_rx': 76168, 'inv_otc': 86544, 'ap': 102000, 'mortgage': 70000, 'fix_asset': 37677, 'ar': 53, 'notes_pay': 0},
         {'id': 'team_3', 'loc': 2, 'prev_price': 18.44, 'prev_share': 20.69, 'cash': 2500.0, 'inv_rx': 60957, 'inv_otc': 117639, 'ap': 61626, 'mortgage': 70000, 'fix_asset': 37655, 'ar': 371, 'notes_pay': 2322},
-        {'id': 'team_4', 'loc': 2, 'prev_price': 19.61, 'prev_share': 18.45, 'cash': 2200.0, 'inv_rx': 67308, 'inv_otc': 154192, 'ap': 142260, 'mortgage': 70000, 'fix_asset': 40233, 'ar': 859, 'notes_pay': 2322},
+        {'id': 'team_4', 'loc': 2, 'prev_price': 19.61, 'prev_share': 18.45, 'cash': 2200.0, 'inv_rx': 67308, 'inv_otc': 154192, 'ap': 142260, 'mortgage': 40233, 'fix_asset': 40233, 'ar': 859, 'notes_pay': 2322},
         {'id': 'team_5', 'loc': 3, 'prev_price': 19.47, 'prev_share': 11.25, 'cash': 2500.0, 'inv_rx': 65466, 'inv_otc': 98999, 'ap': 123222, 'mortgage': 90200, 'fix_asset': 45322, 'ar': 0, 'notes_pay': 0},
         {'id': 'team_6', 'loc': 3, 'prev_price': 19.91, 'prev_share': 14.07, 'cash': 2200.0, 'inv_rx': 95436, 'inv_otc': 99999, 'ap': 102000, 'mortgage': 90900, 'fix_asset': 51233, 'ar': 4343, 'notes_pay': 0},
         {'id': 'team_7', 'loc': 1, 'prev_price': 22.52, 'prev_share': 10.56, 'cash': 1323.0, 'inv_rx': 68224, 'inv_otc': 21222, 'ap': 32444, 'mortgage': 50433, 'fix_asset': 34566, 'ar': 27174, 'notes_pay': 0}
@@ -128,22 +130,21 @@ def get_inferred_inputs(team_num):
         inp[23]=1200; inp[14]=10000; inp[15]=55000 
     elif team_num == 4:
         inp[0]=50; inp[1]=2.8; inp[28]=142260; inp[6]=70; inp[7]=1500; inp[13]=34
-        inp[18]=19.50; inp[20]=4.75; inp[2]=0.25; inp[23]=1200; inp[14]=20000
+        inp[17]=2; inp[18]=19.50; inp[19]=2; inp[20]=4.75; inp[2]=0.25; inp[23]=1200; inp[14]=20000
     elif team_num == 5:
         inp[0]=50; inp[1]=2.7; inp[28]=123222; inp[6]=90; inp[7]=2200; inp[13]=33
-        inp[18]=20.00; inp[20]=4.75; inp[5]=1; inp[23]=2000; inp[14]=50000; inp[15]=80000
+        inp[17]=2; inp[18]=20.00; inp[19]=3; inp[20]=4.75; inp[5]=1; inp[23]=2000; inp[14]=50000; inp[15]=80000
     elif team_num == 6:
         inp[0]=50; inp[1]=3.0; inp[28]=102000; inp[6]=75; inp[7]=3000; inp[13]=37
-        inp[18]=22.00; inp[20]=5.12; inp[23]=1300; inp[14]=70000; inp[15]=80000
+        inp[17]=2; inp[18]=22.00; inp[19]=3; inp[20]=5.12; inp[23]=1300; inp[14]=70000; inp[15]=80000
     elif team_num == 7:
         inp[0]=50; inp[1]=5.5; inp[28]=32444; inp[6]=48; inp[7]=600; inp[13]=55
-        inp[18]=19.75; inp[20]=4.90; inp[23]=900
+        inp[17]=2; inp[18]=19.75; inp[19]=2; inp[20]=4.90; inp[23]=900
     return inp
 
 def initialize_scenario():
     st.session_state.players = {}
     st.session_state.global_period = 1
-    # Force Reset Market Data only on init
     st.session_state.market_data_list = list(DEFAULT_MARKET_DATA)
     scenarios = get_hisc1p1_data()
     
@@ -173,10 +174,42 @@ def initialize_scenario():
         }
 
 # ==========================================
-# 4. LOGIC ENGINE (LOCKED & DEBUGGED)
+# 4. LOGIC ENGINE (SANITIZED)
 # ==========================================
+def sanitize_input(inp_list, store_name):
+    # [NEW] This function forcibly corrects crazy values before calculation
+    cleaned = list(inp_list)
+    changes = []
+    
+    # 1. Sanitize Pharmacists (FTE) - Index 17
+    # If > 10 people or < 0, reset to 2
+    if cleaned[17] > 10 or cleaned[17] < 0:
+        changes.append(f"{store_name}: Pharmacists was {cleaned[17]}, fixed to 2")
+        cleaned[17] = 2.0
+        
+    # 2. Sanitize Pharm Wage ($/hr) - Index 18
+    # If > $100/hr (impossible) or < $10, reset to $30
+    if cleaned[18] > 100 or cleaned[18] < 10:
+        changes.append(f"{store_name}: RPh Wage was {cleaned[18]}, fixed to 30.0")
+        cleaned[18] = 30.0
+
+    # 3. Sanitize Clerks (FTE) - Index 19
+    if cleaned[19] > 20 or cleaned[19] < 0:
+        changes.append(f"{store_name}: Clerks was {cleaned[19]}, fixed to 2")
+        cleaned[19] = 2.0
+        
+    # 4. Sanitize Clerk Wage ($/hr) - Index 20
+    if cleaned[20] > 50 or cleaned[20] < 2:
+        cleaned[20] = 6.0
+
+    if changes:
+        st.session_state.sanity_check_log.extend(changes)
+        
+    return cleaned
+
 def calculate_results():
-    st.session_state.debug_logs = [] # Clear logs
+    st.session_state.debug_logs = []
+    st.session_state.sanity_check_log = [] # Clear sanity logs
     mkt = st.session_state.market_data_list
     rx_w_df = st.session_state.rx_weights_df
     otc_w_df = st.session_state.otc_weights_df
@@ -189,13 +222,10 @@ def calculate_results():
     AVG_OTC_VOL = mkt[10] 
     SLIPPAGE_RATE = mkt[11]/100.0
     
-    # [CRITICAL FIX] IGNORE USER INPUT FOR PERIODS - FORCE 8.66 WEEKS
-    # This guarantees wages will not explode even if mkt[12] is broken
+    # HARDCODED TIME
     WEEKS_PER_PERIOD = 8.66 
     PERIODS_PER_YEAR = 6.0
     
-    LAG_AR = mkt[14]/100.0
-    INFLATION = mkt[19]/100.0
     STOCKOUT_PENALTY_RX = mkt[20]/100.0
     STOCKOUT_PENALTY_OTC = mkt[21]/100.0
     SS_WC_RATE = mkt[27]/100.0
@@ -205,6 +235,11 @@ def calculate_results():
     if num_stores == 0: return
 
     ranking_data = []
+    
+    # 1. PRE-CALC LOOP: SANITIZE INPUTS
+    for p in active_stores:
+        p['inputs'] = sanitize_input(p['inputs'], p['shop_name'])
+
     avg_rph_wage = np.mean([p['inputs'][18] for p in active_stores])
 
     for p in active_stores:
@@ -294,7 +329,6 @@ def calculate_results():
         emer_otc = max(0, req_otc - avail_otc)
         emer_otc_cost = emer_otc * (1 + STOCKOUT_PENALTY_OTC)
         
-        # --- EXPENSE DEBUGGER ---
         wage_rph = (inp[17] * 40 * WEEKS_PER_PERIOD * inp[18])
         rph_ot_cost = 0 
         if my_rx_vol > (inp[17] * 40 * WEEKS_PER_PERIOD * 6): rph_ot_cost = (my_rx_vol - (inp[17] * 40 * WEEKS_PER_PERIOD * 6)) * inp[18] * 1.5
@@ -302,8 +336,8 @@ def calculate_results():
         clk_ot_cost = 0 
         ben_cost = (wage_rph + wage_clk + rph_ot_cost + clk_ot_cost) * (SS_WC_RATE + (0.05 if inp[32] else 0) + (0.10 if inp[33] else 0))
         
-        mgr_salary = inp[21] * (52 / PERIODS_PER_YEAR / 4) # Monthly input to period cost (approx)
-        if mgr_salary > 10000: mgr_salary = inp[21] * 2 # Safety if period logic fails
+        mgr_salary = inp[21] * (52 / PERIODS_PER_YEAR / 4)
+        if mgr_salary > 10000: mgr_salary = inp[21] * 2
         
         rent = total_rev * LOC_RENT_RATE.get(p['location_code'], 0.03)
         utilities = 3000 * (inp[6]/50)
@@ -314,15 +348,14 @@ def calculate_results():
         total_opex = wage_rph + rph_ot_cost + wage_clk + clk_ot_cost + ben_cost + mgr_salary + rent + utilities + promo + mortgage_pay
         gross_margin = total_rev - (rx_cogs + otc_cogs)
         
-        # [NEW] Log the expenses for Debugging
+        # LOGGING (With sanitized inputs, these should be sane)
         st.session_state.debug_logs.append({
             "Store": p['shop_name'],
             "Total OPEX": total_opex,
-            "Wages": wage_rph + wage_clk,
-            "Benefits": ben_cost,
-            "Rent": rent,
-            "Weeks Used": WEEKS_PER_PERIOD,
-            "Mortgage Pay": mortgage_pay
+            "Wages Used": wage_rph + wage_clk,
+            "RPh FTE": inp[17],
+            "RPh Wage Rate": inp[18],
+            "Benefits": ben_cost
         })
         
         cash_in = (total_rev * 0.3) + fin['acct_receivable'] 
@@ -384,8 +417,8 @@ def calculate_results():
 # 5. UI COMPONENTS
 # ==========================================
 with st.sidebar:
-    st.title("💊 Communi-Pharm V37.3")
-    st.caption("Hard-Locked Time Logic")
+    st.title("💊 Communi-Pharm V37.4")
+    st.caption("Auto-Sanitizer Active")
     if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
 
 def generate_master_report(players):
@@ -402,12 +435,15 @@ def generate_master_report(players):
 def render_instructor_ui():
     st.header("👨‍🏫 Instructor Dashboard")
     
+    # --- SANITY LOG ---
+    if st.session_state.sanity_check_log:
+        st.markdown('<div class="debug-box">🧹 Input Sanitizer Active! Malformed data was auto-corrected:</div>', unsafe_allow_html=True)
+        st.json(st.session_state.sanity_check_log)
+
     # --- DEBUG TAB ---
-    with st.expander("🔧 Debug Logs (Check Expense Anomalies here)", expanded=False):
+    with st.expander("🔧 Debug Logs", expanded=False):
         if st.session_state.debug_logs:
             st.write(pd.DataFrame(st.session_state.debug_logs))
-        else:
-            st.write("No logs yet. Run a period.")
 
     if st.session_state.game_state == "SETUP_STEP_1":
         st.info("Initialize Exact Scenario.")
@@ -426,7 +462,6 @@ def render_instructor_ui():
 
     elif st.session_state.game_state == "MARKET_EDIT_RUN":
         st.markdown(f"### 🚨 Market Environment (Period {st.session_state.global_period})"); 
-        st.warning("Note: 'Periods per Year' input is ignored in this version to prevent calculation errors. Fixed at 6.0 (8.66 weeks).")
         df_mkt = pd.DataFrame({"Variable": MARKET_LABELS, "Value": st.session_state.market_data_list}); 
         ed = st.data_editor(df_mkt, height=600, use_container_width=True)
         c1, c2 = st.columns(2)
