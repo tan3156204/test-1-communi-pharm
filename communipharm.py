@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 0. CONFIG & UTILS
 # ==========================================
-st.set_page_config(page_title="PharmaSim V55.0 (Full Env)", layout="wide")
+st.set_page_config(page_title="PharmaSim V56.0 (Accounting Logic Fix)", layout="wide")
 
 def force_reset():
     st.session_state.clear()
@@ -17,7 +17,6 @@ def safe_fmt(x):
     return str(x)
 
 def get_current_date_str():
-    # Try to build date from Env if available
     if 'market_env' in st.session_state:
         d = st.session_state.market_env.get('date_day', 30)
         m = st.session_state.market_env.get('date_month', 6)
@@ -26,7 +25,7 @@ def get_current_date_str():
     return "30/06/1989"
 
 # ==========================================
-# 1. CONSTANTS
+# 1. CONSTANTS & DATA
 # ==========================================
 STORE_CATEGORY = {
     0: "Medical", 1: "Neighbor", 2: "Shopping", 
@@ -39,6 +38,7 @@ WEIGHTS = {
     "Shopping": {"rx_price": 10, "adv": 15, "hours": 12, "delivery": 1, "records": 1, "credit": 1, "inventory": 10, "prev_share": 5, "otc_markup": 20, "otc_adv": 10, "otc_hours": 15}
 }
 
+# Baseline Inputs based on user's inputc1p1
 BASELINE_INPUTS = [
     {"markup": 60, "promo": 600, "hours": 46, "del": 1, "rec": 1, "cred": 1, "pharm": 0, "clerk": 1.2, "ap_paid": 60889, "rx_pur": 40000, "otc_pur": 16000},
     {"markup": 30, "promo": 1500, "hours": 60, "del": 1, "rec": 1, "cred": 0, "pharm": 1, "clerk": 6.6, "ap_paid": 102000, "rx_pur": 60000, "otc_pur": 80000},
@@ -54,7 +54,7 @@ BASELINE_TARGETS = {
     "other_sales": [13136, 85384, 97425, 87573, 123698, 108372, 5911],
 }
 
-# --- RESTORED FULL ENVIRONMENT LIST (28 Variables) ---
+# FULL 28 ENV VARIABLES
 ENV_MAPPING = [
     {"key": "avg_ing_cost", "label": "Average Ingredient Cost ($)", "value": 11.23},
     {"key": "avg_copay", "label": "Average Copay Allowed ($)", "value": 2.0},
@@ -131,9 +131,9 @@ if 'game_state' not in st.session_state:
 def init_game(n_stores):
     st.session_state.players = {}
     st.session_state.current_period = 1
-    # Ensure environment is re-initialized with full list
     st.session_state.market_env = {item['key']: item['value'] for item in ENV_MAPPING}
     
+    # Financial Initialization 
     init_cash = [8746, 2500, 2500, 2200, 2500, 2200, 5000]
     
     for i in range(n_stores):
@@ -144,14 +144,10 @@ def init_game(n_stores):
         d[0] = float(base['markup'])
         d[3] = float(base['del']); d[4] = float(base['rec']); d[5] = float(base['cred'])
         d[6] = float(base['hours']); d[7] = float(base['promo'])
-        d[14] = float(base['rx_pur'])
-        d[15] = float(base['otc_pur'])
-        d[16] = float(base['pharm']) 
-        d[17] = 20.0 
-        d[18] = float(base['clerk']) 
-        d[19] = 5.0 
-        d[20] = 8000.0 
-        d[28] = float(base['ap_paid']) 
+        d[14] = float(base['rx_pur']); d[15] = float(base['otc_pur'])
+        d[16] = float(base['pharm']); d[17] = 20.0 
+        d[18] = float(base['clerk']); d[19] = 5.0 
+        d[20] = 8000.0; d[28] = float(base['ap_paid']) 
         
         init_ap_val = base['ap_paid'] 
         init_ar_val = 22000 
@@ -195,6 +191,7 @@ def run_period_simulation():
         inp = p['inputs']
         fin = p['financials']
         
+        # --- INPUTS ---
         curr_markup = inp[0]; copay_disc = inp[2]
         curr_del = inp[3]; curr_rec = inp[4]; curr_cred = inp[5]
         curr_hours = inp[6]; curr_promo = inp[7]
@@ -205,11 +202,10 @@ def run_period_simulation():
         mgr_sal = inp[20]; mgr_hours = inp[22]
         mortgage = inp[23]; ap_paid = inp[28]
         
+        # --- SALES ---
         cat = STORE_CATEGORY.get(ref_idx, "Neighbor")
         w = WEIGHTS[cat]
         base_in = BASELINE_INPUTS[ref_idx]
-        
-        # Build temp env for score calculation (supports full list)
         base_env = {item['key']: item['value'] for item in ENV_MAPPING}
         
         curr_score = calculate_score(w, curr_markup, curr_promo, curr_hours, curr_del, curr_rec, curr_cred, env)
@@ -225,6 +221,7 @@ def run_period_simulation():
         sales_rx = actual_rx_vol * actual_rx_price
         total_sales = sales_rx + actual_other_sales
         
+        # --- COGS & INVENTORY ---
         cogs_rx = sales_rx / (1 + curr_markup/100)
         cogs_other = actual_other_sales / (1 + otc_markup/100)
         total_cogs = cogs_rx + cogs_other
@@ -237,46 +234,78 @@ def run_period_simulation():
             e_otc_pur = shortage * 0.3 * 1.1
             total_cogs = avail_inv 
             
+        # --- EXPENSES (Including Benefits & Insurance) ---
         weeks = 52.0 / env['periods_per_year']
         rp_base_hrs = min(curr_hours, 40); rp_ot_hrs = max(0, curr_hours - 40)
-        
-        if pharmacists > 0:
-            base_pharm_cost = pharmacists * rp_base_hrs * wage_pharm * weeks
-            ot_pharm_cost = pharmacists * rp_ot_hrs * wage_pharm * 1.5 * weeks
-        else:
-            base_pharm_cost = 0; ot_pharm_cost = 0
-            
         clk_base_hrs = min(curr_hours, 40); clk_ot_hrs = max(0, curr_hours - 40)
+        
+        base_pharm_cost = pharmacists * rp_base_hrs * wage_pharm * weeks if pharmacists > 0 else 0
+        ot_pharm_cost = pharmacists * rp_ot_hrs * wage_pharm * 1.5 * weeks if pharmacists > 0 else 0
+        
         base_clerk_cost = clerks * clk_base_hrs * wage_clerk * weeks
         ot_clerk_cost = clerks * clk_ot_hrs * wage_clerk * 1.5 * weeks
         
-        benefits = (base_pharm_cost + base_clerk_cost + ot_pharm_cost + ot_clerk_cost) * (env['ss_wc_rate'] / 100.0)
+        total_wages = base_pharm_cost + ot_pharm_cost + base_clerk_cost + ot_clerk_cost
+        
+        # Benefits: SS/WC + Life/Health Insurance (Inputs 32, 33 - Simplified cost)
+        insurance_cost = 0
+        if inp[32] == 1: insurance_cost += (pharmacists + clerks) * 100 # Life
+        if inp[33] == 1: insurance_cost += (pharmacists + clerks) * 200 # Health
+        
+        benefits = total_wages * (env['ss_wc_rate'] / 100.0) + insurance_cost
+        
         rent = total_sales * (0.045 if pid == 0 else 0.03)
         inf_factor = 1 + (env['inflation'] / 100.0)
         misc_ops = (total_sales * 0.015 + 2000) * inf_factor
         
-        opex_cash = base_pharm_cost + ot_pharm_cost + base_clerk_cost + ot_clerk_cost + benefits + rent + curr_promo + misc_ops + mgr_sal + mortgage
+        opex_cash = total_wages + benefits + rent + curr_promo + misc_ops + mgr_sal + mortgage
         
-        receivables_total = fin['ar'] + total_sales
-        collection_rate = 0.90
-        cash_in = receivables_total * collection_rate
-        new_ar = receivables_total - cash_in
+        # --- CASH FLOW (ACCOUNTING LOGIC FIX) ---
+        # 1. Determine Credit vs Cash Sales
+        # Credit comes from 3rd Party AND Store Credit
+        pct_3rd = env['pct_3rd_party'] / 100.0
+        pct_private = 1.0 - pct_3rd
         
+        # If Store offers credit, assume 40% of private sales use it
+        credit_offer_pct = 0.40 if curr_cred == 1 else 0.0
+        
+        pct_credit_sales = pct_3rd + (pct_private * credit_offer_pct)
+        pct_cash_sales = 1.0 - pct_credit_sales
+        
+        # 2. Cash Inflow = Cash Sales + Collection of Prev AR
+        cash_sales = total_sales * pct_cash_sales
+        # Collection: 3rd Party Lag & AR Lag implies not 100% collected immediately
+        # We collect most of the OLD AR.
+        collection_from_ar = fin['ar'] * 0.90 
+        
+        cash_in = cash_sales + collection_from_ar
+        
+        # 3. New AR = Remaining Old AR + New Credit Sales
+        new_credit_sales = total_sales * pct_credit_sales
+        uncollected_old_ar = fin['ar'] * 0.10
+        new_ar = uncollected_old_ar + new_credit_sales
+        
+        # 4. Outflows
         total_cash_out = opex_cash + ap_paid
+        
         net_cash_flow = cash_in - total_cash_out
         temp_ending_cash = fin['cash'] + net_cash_flow
         
+        # Emergency Loan Check
         e_loan = 0; interest = 0
-        if temp_ending_cash < 2500:
-            shortfall = 2500 - temp_ending_cash
+        min_cash = inp[25] if inp[25] > 0 else 2500 # Use Input [25]
+        
+        if temp_ending_cash < min_cash:
+            shortfall = min_cash - temp_ending_cash
             e_loan = shortfall
-            temp_ending_cash = 2500
+            temp_ending_cash = min_cash
             interest = e_loan * (env['interest_rate']/100.0) / env['periods_per_year']
         
         total_expenses_profit = opex_cash + interest
         gross_profit = total_sales - total_cogs
         net_profit = gross_profit - total_expenses_profit
         
+        # --- FINANCIAL UPDATE ---
         fin['cash'] = temp_ending_cash
         fin['loan'] += e_loan
         fin['ap'] = fin['ap'] + rx_purch + otc_purch + e_rx_pur + e_otc_pur - ap_paid
@@ -290,6 +319,7 @@ def run_period_simulation():
         net_worth = total_assets - total_liab
         fin['net_worth'] = net_worth
         
+        # --- OUTPUTS ---
         res = {}
         res["TOT SALES"] = total_sales
         res["Rx SALES"] = sales_rx
@@ -365,11 +395,7 @@ def render_instructor():
         tab1, tab2, tab3 = st.tabs(["📊 Reports", "⚙️ Environment", "🎮 Controls"])
         
         with tab1:
-            st.subheader("🏆 Live Leaderboard")
-            st.dataframe(get_leaderboard().style.format({"Net Worth": "${:,.0f}", "Last Profit": "${:,.0f}"}), use_container_width=True)
-            st.divider()
-            
-            st.subheader(f"📊 Full Market Report")
+            st.subheader("📊 Full Market Report")
             if st.session_state.current_period > 1:
                 combined_data = {}
                 for pid, p in st.session_state.players.items():
@@ -386,10 +412,8 @@ def render_instructor():
 
         with tab2:
             st.subheader("⚙️ Market Variables")
-            # Convert dict to df for editing
             current_env_data = []
             for item in ENV_MAPPING:
-                # Use value from session_state if available, else default
                 key = item['key']
                 val = st.session_state.market_env.get(key, item['value'])
                 current_env_data.append({"Variable Name": item['label'], "Value": val, "Key": key})
@@ -472,7 +496,7 @@ def render_student():
 # ==========================================
 # 5. MAIN EXECUTION
 # ==========================================
-st.sidebar.title("💊 PharmaSim V55.0")
+st.sidebar.title("💊 PharmaSim V56.0")
 
 if st.sidebar.button("🔴 FORCE RESET & CLEAR DATA", type="primary"):
     force_reset()
