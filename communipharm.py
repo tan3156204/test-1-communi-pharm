@@ -3,42 +3,46 @@ import pandas as pd
 import numpy as np
 
 # ==========================================
-# 1. CONSTANTS & CALIBRATION
+# 0. FORCE RESET UTILITY (NEW)
 # ==========================================
-st.set_page_config(page_title="PharmaSim V54 (Final Calibration)", layout="wide")
+def force_reset():
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
 
-# Store Categories
+st.set_page_config(page_title="PharmaSim V54.2 (Final Fix)", layout="wide")
+
+# ==========================================
+# 1. CONSTANTS
+# ==========================================
 STORE_CATEGORY = {
     0: "Medical", 1: "Neighbor", 2: "Shopping", 
     3: "Neighbor", 4: "Neighbor", 5: "Neighbor", 6: "Neighbor"
 }
 
-# Weights (Calibration Factors)
 WEIGHTS = {
     "Medical": {"rx_price": 5, "adv": 11, "hours": 7, "delivery": 10, "records": 15, "credit": 3, "inventory": 10, "prev_share": 23, "otc_markup": 5, "otc_adv": 5, "otc_hours": 3},
     "Neighbor": {"rx_price": 5, "adv": 12, "hours": 10, "delivery": 6, "records": 8, "credit": 2, "inventory": 10, "prev_share": 15, "otc_markup": 15, "otc_adv": 10, "otc_hours": 15},
     "Shopping": {"rx_price": 10, "adv": 15, "hours": 12, "delivery": 1, "records": 1, "credit": 1, "inventory": 10, "prev_share": 5, "otc_markup": 20, "otc_adv": 10, "otc_hours": 15}
 }
 
-# Baseline Inputs (Taken DIRECTLY from inputc1p1)
+# Baseline Inputs (Reference inputc1p1)
 BASELINE_INPUTS = [
-    {"markup": 60, "promo": 600, "hours": 46, "del": 1, "rec": 1, "cred": 1, "pharm": 0, "ap_paid": 60889},
-    {"markup": 30, "promo": 1500, "hours": 60, "del": 1, "rec": 1, "cred": 0, "pharm": 1, "ap_paid": 102000},
-    {"markup": 30, "promo": 1900, "hours": 70, "del": 0, "rec": 1, "cred": 0, "pharm": 1.3, "ap_paid": 61626},
-    {"markup": 40, "promo": 1500, "hours": 70, "del": 0, "rec": 0, "cred": 0, "pharm": 1.5, "ap_paid": 115000},
-    {"markup": 35, "promo": 2200, "hours": 90, "del": 0, "rec": 0, "cred": 1, "pharm": 1.5, "ap_paid": 98000},
-    {"markup": 38, "promo": 3000, "hours": 75, "del": 0, "rec": 1, "cred": 0, "pharm": 1.75, "ap_paid": 95000},
-    {"markup": 49, "promo": 600, "hours": 48, "del": 0, "rec": 1, "cred": 1, "pharm": 1, "ap_paid": 58000}
+    {"markup": 60, "promo": 600, "hours": 46, "del": 1, "rec": 1, "cred": 1, "pharm": 0, "clerk": 1.2, "ap_paid": 60889, "rx_pur": 40000, "otc_pur": 16000},
+    {"markup": 30, "promo": 1500, "hours": 60, "del": 1, "rec": 1, "cred": 0, "pharm": 1, "clerk": 6.6, "ap_paid": 102000, "rx_pur": 60000, "otc_pur": 80000},
+    {"markup": 30, "promo": 1900, "hours": 70, "del": 0, "rec": 1, "cred": 0, "pharm": 1.3, "clerk": 7.0, "ap_paid": 61626, "rx_pur": 65000, "otc_pur": 120000},
+    {"markup": 40, "promo": 1500, "hours": 70, "del": 0, "rec": 0, "cred": 0, "pharm": 1.5, "clerk": 6.5, "ap_paid": 115000, "rx_pur": 65000, "otc_pur": 145000},
+    {"markup": 35, "promo": 2200, "hours": 90, "del": 0, "rec": 0, "cred": 1, "pharm": 1.5, "clerk": 8.9, "ap_paid": 98000, "rx_pur": 85000, "otc_pur": 145000},
+    {"markup": 38, "promo": 3000, "hours": 75, "del": 0, "rec": 1, "cred": 0, "pharm": 1.75, "clerk": 8.0, "ap_paid": 95000, "rx_pur": 65000, "otc_pur": 175000},
+    {"markup": 49, "promo": 600, "hours": 48, "del": 0, "rec": 1, "cred": 1, "pharm": 1, "clerk": 1.0, "ap_paid": 58000, "rx_pur": 40000, "otc_pur": 24000}
 ]
 
-# Baseline Targets (Calibrated to outputc1p1)
 BASELINE_TARGETS = {
     "rx_demand": [4655, 5971, 9091, 7721, 5199, 4927, 4023],
     "other_sales": [13136, 85384, 97425, 87573, 123698, 108372, 5911],
     "avg_rx_price": [22.02, 18.54, 18.44, 19.61, 19.47, 19.91, 22.52] 
 }
 
-# Env Mapping
 ENV_MAPPING = [
     {"key": "avg_ing_cost", "label": "Average Ingredient Cost ($)", "value": 11.23},
     {"key": "avg_copay", "label": "Average Copay Allowed ($)", "value": 2.0},
@@ -98,42 +102,37 @@ def init_game(n_stores):
     st.session_state.current_period = 1
     st.session_state.market_env = {item['key']: item['value'] for item in ENV_MAPPING}
     
-    # Financial Initialization (Calibrated to allow matching P1 outputs)
-    # We infer STARTING values that would result in the P1 Outputs given P1 Inputs
-    init_cash = [8746, 2500, 2500, 2200, 2500, 2200, 5000] # Target ending cash approx
-    init_inv = [128000, 140000, 150000, 145000, 130000, 135000, 110000]
+    # Financial Initialization 
+    # Store 1 Target: Cash ~8k, Inv ~130k, AR ~22k, AP ~60k -> NW ~90-100k
+    init_cash = [8746, 2500, 2500, 2200, 2500, 2200, 5000]
     
     for i in range(n_stores):
         ref_idx = i if i < 7 else 0 
         base = BASELINE_INPUTS[ref_idx]
         
-        # --- Defaults Setup (CRITICAL FOR MATCHING INPUT C1P1) ---
+        # --- Defaults Setup ---
         d = [0.0] * 36
         d[0] = float(base['markup'])
         d[3] = float(base['del']); d[4] = float(base['rec']); d[5] = float(base['cred'])
         d[6] = float(base['hours']); d[7] = float(base['promo'])
         
-        # Purchases (Estimated defaults)
-        d[14] = 40000.0 if ref_idx == 0 else 60000.0
-        d[15] = 16000.0 if ref_idx == 0 else 80000.0
+        d[14] = float(base['rx_pur'])
+        d[15] = float(base['otc_pur'])
         
-        # Labor
-        d[16] = float(base['pharm']) # Store 1 = 0
-        d[17] = 20.0 # Pharm Rate
-        d[18] = 4.0 # Clerks (Store 1 has 1.2 in input, let's use sensible defaults)
-        d[19] = 5.0 # Clerk Rate
+        d[16] = float(base['pharm']) 
+        d[17] = 20.0 
+        d[18] = float(base['clerk']) # Corrected Clerk Count
+        d[19] = 5.0 
         d[20] = 8000.0 # Mgr Salary
         
-        # Financials
-        d[28] = float(base['ap_paid']) # CORRECT AP PAYMENT
+        d[28] = float(base['ap_paid']) 
         
         # Initialize Financial State
-        # We assume Beginning AP = AP Payment (Clean slate for P1 mostly) + Some carryover
         init_ap_val = base['ap_paid'] 
-        init_ar_val = 22000 # Approximation
+        init_ar_val = 22000 
+        init_inv = 130000 
         
-        # Net Worth Start
-        nw_start = init_cash[ref_idx] + init_inv[ref_idx] + init_ar_val - init_ap_val
+        nw_start = init_cash[ref_idx] + init_inv + init_ar_val - init_ap_val
         
         st.session_state.players[i] = {
             "name": f"Store {i+1}",
@@ -141,7 +140,7 @@ def init_game(n_stores):
             "inputs": d,
             "financials": {
                 "cash": init_cash[ref_idx],
-                "inventory": init_inv[ref_idx],
+                "inventory": init_inv,
                 "ar": init_ar_val, 
                 "ap": init_ap_val,
                 "loan": 0,
@@ -160,7 +159,7 @@ def reset_game():
     st.rerun()
 
 # ==========================================
-# 3. CORE LOGIC (FIXED CASH FLOW)
+# 3. CORE LOGIC
 # ==========================================
 def calculate_score(w, markup, promo, hours, delivery, records, credit, env):
     est_price = env['avg_ing_cost'] * (1 + markup/100) 
@@ -223,7 +222,7 @@ def run_period_simulation():
             shortage = total_cogs - avail_inv
             e_rx_pur = shortage * 0.7 * 1.1 
             e_otc_pur = shortage * 0.3 * 1.1
-            total_cogs = avail_inv # Cap COGS at available (simplified)
+            total_cogs = avail_inv # Cap COGS at available
             
         # --- 4. EXPENSES ---
         weeks = 52.0 / env['periods_per_year']
@@ -232,7 +231,6 @@ def run_period_simulation():
         rp_base_hrs = min(curr_hours, 40)
         rp_ot_hrs = max(0, curr_hours - 40)
         
-        # If pharmacist = 0, cost is 0 (Owner/Manager covers it)
         if pharmacists > 0:
             base_pharm_cost = pharmacists * rp_base_hrs * wage_pharm * weeks
             ot_pharm_cost = pharmacists * rp_ot_hrs * wage_pharm * 1.5 * weeks
@@ -245,29 +243,25 @@ def run_period_simulation():
         ot_clerk_cost = clerks * clk_ot_hrs * wage_clerk * 1.5 * weeks
         
         benefits = (base_pharm_cost + base_clerk_cost + ot_pharm_cost + ot_clerk_cost) * (env['ss_wc_rate'] / 100.0)
+        
+        # FIX SYNTAX ERROR HERE (Cleaned up)
         rent = total_sales * (0.045 if pid == 0 else 0.03)
-        # Inflation check: Ensure we aren't multiplying by 1.1 (110%) if input is 1.1%
         inf_factor = 1 + (env['inflation'] / 100.0)
         misc_ops = (total_sales * 0.015 + 2000) * inf_factor
         
         total_opex_cash = base_pharm_cost + ot_pharm_cost + base_clerk_cost + ot_clerk_cost + benefits + rent + curr_promo + misc_ops + mgr_sal + mortgage
         
-        # --- 5. CASH FLOW (REVISED) ---
+        # --- 5. CASH FLOW ---
         # Inflows
-        # Collection: We collect (Start AR + Sales) * CollectionRate
-        # Collection Rate is typically 80-90% depending on 3rd party
         receivables_total = fin['ar'] + total_sales
-        collection_rate = 0.90 # Standardize for now to avoid complexity
+        collection_rate = 0.90
         cash_in = receivables_total * collection_rate
         new_ar = receivables_total - cash_in
         
         # Outflows
-        # You pay OPEX + AP Payment
         total_cash_out = total_opex_cash + ap_paid
         
         net_cash_flow = cash_in - total_cash_out
-        
-        # Ending Cash Calculation
         temp_ending_cash = fin['cash'] + net_cash_flow
         
         # Emergency Loan Check
@@ -276,23 +270,17 @@ def run_period_simulation():
             shortfall = 2500 - temp_ending_cash
             e_loan = shortfall
             temp_ending_cash = 2500
-            # Interest for this period (simple)
             interest = e_loan * (env['interest_rate']/100.0) / env['periods_per_year']
         
-        # Update Expenses with Interest
         total_expenses_profit = total_opex_cash + interest
-        
-        # --- 6. PROFIT & FINANCIAL UPDATE ---
         gross_profit = total_sales - total_cogs
         net_profit = gross_profit - total_expenses_profit
         
-        # Update Balance Sheet
+        # --- 6. FINANCIAL UPDATE ---
         fin['cash'] = temp_ending_cash
         fin['loan'] += e_loan
-        
-        # AP = Old AP + New Purchases - Paid + Emergency Purchases
         fin['ap'] = fin['ap'] + rx_purch + otc_purch + e_rx_pur + e_otc_pur - ap_paid
-        if fin['ap'] < 0: fin['ap'] = 0 # Safety check
+        if fin['ap'] < 0: fin['ap'] = 0
         
         fin['inventory'] = fin['inventory'] + rx_purch + otc_purch + e_rx_pur + e_otc_pur - total_cogs
         fin['ar'] = new_ar
@@ -332,7 +320,7 @@ def run_period_simulation():
         res["E OTC Pur"] = e_otc_pur
         res["RATIOS"] = np.nan 
         
-        # RATIOS (Annualized Correctly)
+        # RATIOS
         res["Current"] = total_assets / total_liab if total_liab else 0
         res["Acid Test"] = (fin['cash'] + fin['ar']) / total_liab if total_liab else 0
         
@@ -377,113 +365,12 @@ def get_current_date_str():
     return "30/06/1989"
 
 # ==========================================
-# 5. UI LAYOUT
+# 6. MAIN APP (FIXED UI)
 # ==========================================
-def render_instructor():
-    st.header(f"👨‍🏫 Instructor Dashboard (Date: {get_current_date_str()})")
-    
-    if st.session_state.game_state == "SETUP":
-        st.info("Step 1: Game Initialization")
-        with st.form("setup_form"):
-            n = st.number_input("Number of Stores (Max 7)", 1, 7, 7)
-            if st.form_submit_button("✅ Start New Game"):
-                init_game(n)
-                st.rerun()
-    else:
-        tab1, tab2, tab3 = st.tabs(["📊 Dashboard & Reports", "⚙️ Environment", "🎮 Controls"])
-        
-        with tab1:
-            st.subheader("🏆 Live Leaderboard")
-            st.dataframe(get_leaderboard().style.format({"Net Worth": "${:,.0f}", "Last Profit": "${:,.0f}"}), use_container_width=True)
-            st.divider()
-            
-            st.subheader(f"📊 Full Market Report (Period {st.session_state.current_period - 1})")
-            if st.session_state.current_period > 1:
-                combined_data = {}
-                for pid, p in st.session_state.players.items():
-                    if p['history']:
-                        last_res = p['history'][-1]
-                        combined_data[p['name']] = [last_res.get(k, 0) for k in OUTPUT_LABELS]
-                
-                df_combined = pd.DataFrame(combined_data, index=OUTPUT_LABELS)
-                # Highlight Cash Flow
-                st.dataframe(df_combined.style.format(safe_format).apply(
-                    lambda x: ['background-color: #ffcccc' if (x.name == "Cash Flow" and float(v) < 0) else '' for v in x], axis=1
-                ), use_container_width=True, height=1000)
-            else:
-                st.info("No data available yet. Run Period 1 first.")
-        
-        with tab2:
-            st.subheader("⚙️ Market Variables")
-            df_env = pd.DataFrame([{"Variable": k, "Value": v} for k, v in st.session_state.market_env.items()])
-            st.dataframe(df_env, use_container_width=True)
+st.sidebar.title("💊 PharmaSim V54.2")
+if st.sidebar.button("🔴 FORCE RESET & CLEAR DATA", type="primary"):
+    force_reset()
 
-        with tab3:
-            st.subheader("🎮 Simulation Control")
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                status_data = [{"Store": p['name'], "Status": p['status']} for p in st.session_state.players.values()]
-                st.dataframe(pd.DataFrame(status_data).T, use_container_width=True)
-            with c2:
-                if st.button("▶️ RUN PERIOD", type="primary", use_container_width=True):
-                    run_period_simulation()
-                    st.rerun()
-            st.divider()
-            if st.button("🔴 END GAME & RESET", type="secondary"):
-                reset_game()
-
-def render_student():
-    if st.session_state.game_state == "SETUP":
-        st.warning("⏳ Waiting for Instructor...")
-        return
-
-    st.header(f"🛒 Student Interface (Period {st.session_state.current_period})")
-    store_ids = list(st.session_state.players.keys())
-    labels = {i: f"{st.session_state.players[i]['name']} ({st.session_state.players[i]['status']})" for i in store_ids}
-    sel_id = st.selectbox("Select Store:", store_ids, format_func=lambda x: labels[x])
-    player = st.session_state.players[sel_id]
-    
-    tab1, tab2, tab3 = st.tabs(["📝 Input Decisions", "📊 Output/Results", "🏆 Rankings"])
-    
-    with tab1:
-        st.caption("Edit values below. Press Enter to confirm/move.")
-        df_input = pd.DataFrame({"Decision Parameter": INPUT_LABELS, "Value": player['inputs']})
-        edited_inputs = st.data_editor(
-            df_input, height=800, use_container_width=True, hide_index=True,
-            column_config={"Decision Parameter": st.column_config.TextColumn(disabled=True), "Value": st.column_config.NumberColumn(format="%.2f")}
-        )
-        if st.button("✅ Submit Decisions", type="primary"):
-            player['inputs'] = edited_inputs['Value'].tolist()
-            player['status'] = "Submitted"
-            st.success("Decisions Submitted Successfully!"); st.rerun()
-                
-    with tab2:
-        if player['history']:
-            st.subheader("Performance Report")
-            data_dict = {}
-            for i, h in enumerate(player['history']):
-                p_label = f"Period {h.get('Period', i+1)}"
-                data_dict[p_label] = [h.get(k, 0) for k in OUTPUT_LABELS]
-            
-            df_out = pd.DataFrame(data_dict, index=OUTPUT_LABELS)
-            st.dataframe(df_out.style.format(safe_format), use_container_width=True, height=1000)
-            
-            # DEBUG VIEW
-            st.info("🕵️ Debugging Cash Flow:")
-            last_h = player['history'][-1]
-            st.write(f"Cash In (Sales + Collection): {safe_format(last_h.get('DEBUG: Cash In', 0))}")
-            st.write(f"Cash Out (Exp + AP Paid): {safe_format(last_h.get('DEBUG: Cash Out', 0))}")
-            st.write(f"Net Cash Flow: {safe_format(last_h.get('Cash Flow', 0))}")
-        else:
-            st.info("Results will appear here after Period 1 is processed.")
-            
-    with tab3:
-        st.dataframe(get_leaderboard(), use_container_width=True)
-
-# ==========================================
-# 6. MAIN APP
-# ==========================================
-st.sidebar.title("💊 PharmaSim V54 (Calibrated)")
 role = st.sidebar.radio("Role:", ["Student", "Instructor"])
 
 if role == "Instructor":
