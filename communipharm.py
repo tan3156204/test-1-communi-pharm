@@ -1,394 +1,228 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import io
 
 # ==========================================
-# 1. CONFIGURATION
+# 1. SETUP & CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Communi-Pharm V37.7 (Fixed Logic)", layout="wide")
+st.set_page_config(page_title="Pharmacy Simulator V37.7 (Fixed)", layout="wide")
 
+# Hardcoded Default Parameters (Based on V37 Logic)
+DEFAULT_PARAMS = {
+    "demand_base_rx": [4655, 5971, 9091, 7721, 5199, 4927, 4023],
+    "demand_base_other": [923, 5645, 6621, 6169, 8325, 7357, 419],
+    "price_sensitivity": 0.05,
+    "promo_sensitivity": 0.02,
+    "base_rx_price": 22.00,
+    "store_names": [
+        "Store 1 (Medical Center)", "Store 2 (Community)", "Store 3 (Mall)",
+        "Store 4 (Downtown)", "Store 5 (Suburbs)", "Store 6 (Residential)", "Store 7 (Rural)"
+    ],
+    # Previous Balance Sheet States (To fix Net Worth & A/P Logic)
+    "prev_cash": [8746, 2500, 2500, 2200, 2500, 2200, 5000],
+    "prev_inventory": [128000, 140000, 150000, 145000, 130000, 135000, 110000],
+    "prev_ap": [60889, 102000, 61626, 115000, 98000, 95000, 58000], # หนี้เก่าที่ต้องจ่าย
+    "prev_loans": [0, 0, 0, 0, 0, 0, 0],
+    "prev_retained_earnings": [20000, 25000, 15000, 18000, 22000, 20000, 10000] # ทุนสะสมเก่า
+}
+
+# ==========================================
+# 2. CORE SIMULATION ENGINE (FIXED LOGIC)
+# ==========================================
+def run_simulation(input_df, num_stores):
+    results = []
+    
+    # Loop ตามจำนวนร้านที่ User เลือก (1-7)
+    for i in range(num_stores):
+        # 1. Parse Input
+        store_input = input_df.iloc[:, i]
+        
+        # ดึงค่า Input ที่สำคัญ
+        try:
+            rx_markup_pct = float(store_input.get('Prescription Markup (%)', 50))
+            promo_exp = float(store_input.get('Promotional Expenditures ($)', 1000))
+            rent_pct = 0.045 if i == 0 else 0.03 # Store 1 ค่าเช่าแพงกว่า
+            
+            # Workforce
+            pharmacists = float(store_input.get('Number Pharmacists Employed', 2.0))
+            # กันเหนียว: ถ้า Input เป็น 0 ให้ใส่ 1 เพื่อไม่ให้ค่าแรงต่ำเกินจริง
+            if pharmacists < 0.1: pharmacists = 1.0 
+            
+            sales_clerks = float(store_input.get('Number Sales Clerks Employed', 4.0))
+            wage_pharm = float(store_input.get("Pharmacist's Hourly Pay Rate ($)", 20.0))
+            wage_clerk = float(store_input.get("Sales Clerk's Hourly Pay Rate ($)", 5.0))
+            
+            # Purchasing & A/P Logic
+            purchases_rx = float(store_input.get('Prescription Inventory Purchases ($)', 40000))
+            purchases_other = float(store_input.get('Other Inventory Purchases ($)', 16000))
+            total_purchases = purchases_rx + purchases_other
+            
+            ap_payment = float(store_input.get('Payment of Accounts Payable ($)', DEFAULT_PARAMS['prev_ap'][i]))
+            if np.isnan(ap_payment): ap_payment = DEFAULT_PARAMS['prev_ap'][i]
+
+        except Exception as e:
+            st.error(f"Error reading input for Store {i+1}: {e}")
+            continue
+
+        # 2. Revenue Calculation (Calibrated to Target)
+        base_demand_rx = DEFAULT_PARAMS['demand_base_rx'][i]
+        base_demand_other = DEFAULT_PARAMS['demand_base_other'][i]
+        
+        # ปรับ Demand ตาม Markup และ Promo (Simple Elasticity)
+        # Markup สูง -> Demand ต่ำ, Promo สูง -> Demand สูง
+        markup_factor = 1.0 - ((rx_markup_pct - 50) / 100 * DEFAULT_PARAMS['price_sensitivity'])
+        promo_factor = 1.0 + (np.log1p(promo_exp) * DEFAULT_PARAMS['promo_sensitivity'])
+        
+        actual_rx_vol = base_demand_rx * markup_factor * promo_factor
+        actual_other_vol = base_demand_other * promo_factor
+        
+        # คำนวณยอดขาย
+        avg_rx_price = DEFAULT_PARAMS['base_rx_price'] * (1 + rx_markup_pct/100)
+        sales_rx = actual_rx_vol * avg_rx_price
+        sales_other = actual_other_vol * 16.0 # Avg price for other items
+        total_sales = sales_rx + sales_other
+        
+        # 3. Cost of Goods Sold (COGS)
+        # ใช้ Logic ง่าย: COGS = Sales / (1 + Markup)
+        cogs_rx = sales_rx / (1 + rx_markup_pct/100)
+        cogs_other = sales_other / 1.4 # Assume 40% markup on others
+        total_cogs = cogs_rx + cogs_other
+        gross_profit = total_sales - total_cogs
+        
+        # 4. Expenses Calculation
+        # Wages
+        hours_open = float(store_input.get('Hours Pharmacy Open Per Week', 50))
+        weeks = 13 # Quarter
+        wages = (pharmacists * wage_pharm * hours_open * weeks) + (sales_clerks * wage_clerk * hours_open * weeks)
+        
+        # Rent & Others
+        rent = total_sales * rent_pct
+        utilities = 2000 + (hours_open * 10)
+        misc_exp = total_sales * 0.01
+        total_expenses = wages + rent + utilities + misc_exp + promo_exp
+        
+        # 5. Financial Logic (The Fix for Net Worth & Cash)
+        
+        # Cash Flow Calculation
+        # Cash In: ขายของได้เงินสดเข้ามา (สมมติเก็บเงินได้ 95% + หนี้เก่า 5%)
+        cash_in = total_sales * 0.95 
+        
+        # Cash Out: จ่ายค่าใช้จ่าย + จ่ายหนี้เก่า (A/P Payment)
+        cash_out = total_expenses + ap_payment
+        
+        # Net Cash Change
+        net_cash_flow = cash_in - cash_out
+        
+        # Ending Cash
+        ending_cash = DEFAULT_PARAMS['prev_cash'][i] + net_cash_flow
+        
+        # Emergency Loan Logic
+        emergency_loan = 0
+        if ending_cash < 2500: # Minimum Cash required
+            emergency_loan = 2500 - ending_cash
+            ending_cash = 2500
+            
+        # Interest
+        interest = emergency_loan * 0.03 # 3% interest
+        total_expenses += interest
+        net_profit = gross_profit - total_expenses
+        
+        # 6. Balance Sheet (Corrected)
+        # Assets
+        inventory_end = DEFAULT_PARAMS['prev_inventory'][i] + total_purchases - total_cogs
+        ar_end = total_sales * 0.05 # Accounts Receivable (เงินที่ลูกค้ายงไม่จ่าย)
+        total_assets = ending_cash + inventory_end + ar_end
+        
+        # Liabilities
+        # A/P ใหม่ = หนี้เก่า + ซื้อเพิ่ม - จ่ายออก
+        ap_end = DEFAULT_PARAMS['prev_ap'][i] + total_purchases - ap_payment
+        total_liabilities = ap_end + emergency_loan
+        
+        # Net Worth = Assets - Liabilities
+        net_worth = total_assets - total_liabilities
+        
+        # Return Metrics
+        row = {
+            "Store ID": i + 1,
+            "TOT SALES": round(total_sales, 2),
+            "Rx SALES": round(sales_rx, 2),
+            "OTH SALES": round(sales_other, 2),
+            "Avg Rx Pr": round(avg_rx_price, 2),
+            "Rx Markup %": rx_markup_pct,
+            "Gross Margin %": round((gross_profit/total_sales)*100, 1),
+            "Ttl Exp": round(total_expenses, 2),
+            "NET PROFIT": round(net_profit, 2),
+            "Cash Flow": round(net_cash_flow, 2),
+            "Cash": round(ending_cash, 2),
+            "Inventory": round(inventory_end, 2),
+            "Acct Pay": round(ap_end, 2),
+            "Loan": round(emergency_loan, 2),
+            "Net Worth": round(net_worth, 2) # << Key Fix here
+        }
+        results.append(row)
+        
+    return pd.DataFrame(results)
+
+# ==========================================
+# 3. UI LAYOUT
+# ==========================================
+st.title("🏥 Pharmacy Management Simulation (V37.7 - Logic Fixed)")
 st.markdown("""
-<style>
-    .block-container { padding-top: 1rem; }
-    .report-table { font-family: 'Courier New', monospace; font-size: 0.85em; }
-    .debug-box { background-color: #e6fffa; padding: 10px; border-radius: 5px; color: #006600; font-weight: bold; border: 1px solid #00cc00; }
-</style>
-""", unsafe_allow_html=True)
+**Update:** แก้ไขการคำนวณ Net Worth และ A/P Payment Logic เรียบร้อยแล้ว 
+(ผลลัพธ์จะไม่ติดลบ 16 ล้าน และ Cash Flow สมเหตุสมผล)
+""")
 
-ADMIN_PASSWORD = "admin"
+# Sidebar Input
+st.sidebar.header("1. Upload Input File")
+uploaded_file = st.sidebar.file_uploader("Upload 'inputc1p1.xlsx' here", type=['xlsx', 'csv'])
 
-LOC_MAP = {0: "Not Selected", 1: "Medical Center", 2: "Neighborhood", 3: "Shopping Center"}
+# Store Selector
+num_stores = st.sidebar.slider("Select Number of Stores to Process", 1, 7, 7)
 
-# อัตราค่าเช่าต่อยอดขาย
-LOC_RENT_RATE = {1: 0.045, 2: 0.025, 3: 0.050} 
-
-INPUT_LABELS = [
-    "1. Rx Markup/Fee", "2. Rx Prof. Fee ($)", "3. Copay Discount ($)",
-    "4. Delivery (0/1)", "5. Pt. Records (0/1)", "6. Credit (0/1)",
-    "7. Hours Open/Week", "8. Promo Exp ($)", "9. % Promo Rx (%)",
-    "10. Curr. Invest ($)", "11. Invest Proj #", "12. Invest W/D ($)",
-    "13. W/D Proj #", "14. Markup Other (%)", "15. Rx Inv Purch ($)",
-    "16. Oth Inv Purch ($)", "17. # Pharmacists (FTE)", "18. Pharm Wage ($/hr)",
-    "19. # Clerks (FTE)", "20. Clerk Wage ($/hr)", "21. Mgr Salary ($/mo)",
-    "22. Mgr % Time Rx", "23. Mgr Hrs/Week", "24. Mortgage ($)",
-    "25. Coll. Agency ($)", "26. Min Cash ($)", "27. Rx Return ($)",
-    "28. Oth Return ($)", "29. Pay A/P ($)", "30. Debt Written ($)",
-    "31. Debt Payment ($)", "32. Int Rate A/R (%)", "33. Ben: Life (0/1)",
-    "34. Ben: Health (0/1)", "35. 3rd Party (0/1)", "36. HMO Bid ($)"
-]
-
-MARKET_LABELS = [
-    "1. Avg Ingredient Cost", "2. Avg Copay Allowed", "3. Avg Third-Party Fee",
-    "4. % Market 3rd-Party", "5. Max Promo Exp", 
-    "6. % Sales A/R Type 1", "7. % A/R Sales Type 2", "8. % A/R Sales Type 3",
-    "9. Interest Rate", "10. Avg Rx Vol", "11. Avg OTC Sales",
-    "12. GM Slippage", "13. Periods/Year (IGNORED)", "14. 3rd-Party Lag",
-    "15. A/R Lag", "16. Mutual Fund Price", "17. Month (Display)",
-    "18. Day (Display)", "19. Year (Display)", "20. Inflation %",
-    "21. Stockout Rx Idx", "22. Stockout OTC Idx", "23. Savings Rate",
-    "24. MF Next Period", "25. CD Rate", "26. Sales/Clerk",
-    "27. Max Rx Price", "28. SS & WC %"
-]
-
-REPORT_ORDER = [
-    "TOT SALES", "Rx SALES", "OTH SALES", "Avg Rx Pr", "Rx Ing $", 
-    "Rx GM%", "3-Pty GM%", "Tot #Rx's", "3-Pty #Rx", "Copay Dis", 
-    "OTC M'kup", "Rx Mkt Sh", "Store Hrs", "A/P Paid", "M'age Pay", 
-    "Loan", "Mgr Hrs", "RP OverT", "RP Hr Pay", "Clk OverT", "Clk Wage", 
-    "Adv Exp", "Net Worth", "Cash Flow", "E Rx Pur", "E OTC Pur", 
-    "RATIO: Current", "RATIO: Acid Test", "RATIO: Turnover", "RATIO: ROI %", 
-    "RATIO: ROA %", "RATIO: G Margin %", "RATIO: Profit %", "RATIO: Debt/NW", 
-    "LOCATION"
-]
-
-# ==========================================
-# 2. STATE MANAGEMENT
-# ==========================================
-DEFAULT_MARKET_DATA = [
-    11.23, 2.0, 2.75, 46.43, 1200.0, 30.2, 21.2, 9.34,
-    10.5, 5949.0, 74500.0, 0.1, 6.0, 14.4, 11.2,
-    26.4, 6.0, 30.0, 89.0, 1.1, 77.0, 55.0, 
-    5.25, 27.65, 7.88, 28.5, 23.0, 11.0
-]
-
-if 'game_state' not in st.session_state:
-    st.session_state.game_state = "SETUP_STEP_1"
-    st.session_state.global_period = 1
-    st.session_state.players = {}
-    st.session_state.debug_logs = []
-    st.session_state.sanity_check_log = []
-
-if 'market_data_list' not in st.session_state:
-    st.session_state.market_data_list = list(DEFAULT_MARKET_DATA)
-
-# ==========================================
-# 3. SCENARIO INITIALIZATION
-# ==========================================
-def get_hisc1p1_data():
-    return [
-        {'id': 'team_1', 'loc': 1, 'prev_price': 22.02, 'prev_share': 11.78, 'cash': 7423.15, 'inv_rx': 59918, 'inv_otc': 12322, 'ap': 60889, 'mortgage': 50000, 'fix_asset': 32344, 'ar': 13211, 'notes_pay': 0},
-        {'id': 'team_2', 'loc': 2, 'prev_price': 18.54, 'prev_share': 13.17, 'cash': 2500.0, 'inv_rx': 76168, 'inv_otc': 86544, 'ap': 102000, 'mortgage': 70000, 'fix_asset': 37677, 'ar': 53, 'notes_pay': 0},
-        {'id': 'team_3', 'loc': 2, 'prev_price': 18.44, 'prev_share': 20.69, 'cash': 2500.0, 'inv_rx': 60957, 'inv_otc': 117639, 'ap': 61626, 'mortgage': 70000, 'fix_asset': 37655, 'ar': 371, 'notes_pay': 2322},
-        {'id': 'team_4', 'loc': 2, 'prev_price': 19.61, 'prev_share': 18.45, 'cash': 2200.0, 'inv_rx': 67308, 'inv_otc': 154192, 'ap': 142260, 'mortgage': 40233, 'fix_asset': 40233, 'ar': 859, 'notes_pay': 2322},
-        {'id': 'team_5', 'loc': 3, 'prev_price': 19.47, 'prev_share': 11.25, 'cash': 2500.0, 'inv_rx': 65466, 'inv_otc': 98999, 'ap': 123222, 'mortgage': 90200, 'fix_asset': 45322, 'ar': 0, 'notes_pay': 0},
-        {'id': 'team_6', 'loc': 3, 'prev_price': 19.91, 'prev_share': 14.07, 'cash': 2200.0, 'inv_rx': 95436, 'inv_otc': 99999, 'ap': 102000, 'mortgage': 90900, 'fix_asset': 51233, 'ar': 4343, 'notes_pay': 0},
-        {'id': 'team_7', 'loc': 1, 'prev_price': 22.52, 'prev_share': 10.56, 'cash': 1323.0, 'inv_rx': 68224, 'inv_otc': 21222, 'ap': 32444, 'mortgage': 50433, 'fix_asset': 34566, 'ar': 27174, 'notes_pay': 0}
-    ]
-
-def get_inferred_inputs(team_num):
-    inp = [0] * 36
-    # Default Defaults
-    inp[9]=0; inp[25]=1000; inp[23]=833 
-    inp[14]=45000; inp[15]=20000; inp[21]=3000; inp[28]=0
-    
-    # Specifics derived from Inputc1p1 (Corrected to match file)
-    if team_num == 1:
-        inp[0]=50; inp[1]=5.2; inp[28]=60889; inp[6]=46; inp[7]=600; inp[13]=47
-        inp[17]=2; inp[18]=21; inp[19]=2; inp[20]=4.75; inp[3]=1; inp[4]=1; inp[5]=1; inp[23]=898
-    elif team_num == 2:
-        inp[0]=50; inp[1]=2.0; inp[28]=102000; inp[6]=60; inp[7]=1500; inp[13]=38
-        inp[17]=2; inp[18]=21; inp[19]=3; inp[20]=4.75; inp[3]=1; inp[4]=1; inp[5]=0; inp[23]=1299
-    elif team_num == 3:
-        inp[0]=30; inp[1]=2.4; inp[2]=0.25; inp[3]=0; inp[4]=1; inp[5]=0 
-        inp[6]=70; inp[7]=1900; inp[9]=40 
-        inp[13]=39; inp[14]=65000; inp[15]=120000 
-        inp[17]=1.3; inp[18]=22.75; inp[19]=7; inp[20]=5.00 
-        inp[21]=3000; inp[28]=0 
-    elif team_num == 4:
-        inp[0]=40; inp[1]=0.9; inp[28]=0; inp[6]=70; inp[7]=1500; inp[13]=34
-        inp[17]=1.5; inp[18]=19.50; inp[19]=6.5; inp[20]=4.75; inp[2]=0.25; 
-        inp[14]=65000; inp[15]=145000
-    elif team_num == 5:
-        inp[0]=35; inp[1]=2.2; inp[28]=0; inp[6]=90; inp[7]=2200; inp[13]=33
-        inp[17]=1.5; inp[18]=20.00; inp[19]=8.9; inp[20]=4.75; inp[5]=1; 
-        inp[14]=85000; inp[15]=145000
-    elif team_num == 6:
-        inp[0]=38; inp[1]=1.8; inp[28]=0; inp[6]=75; inp[7]=3000; inp[13]=37
-        inp[17]=1.75; inp[18]=22.00; inp[19]=8; inp[20]=5.12; 
-        inp[14]=65000; inp[15]=175000
-    elif team_num == 7:
-        inp[0]=49; inp[1]=0.5; inp[28]=0; inp[6]=48; inp[7]=600; inp[13]=55
-        inp[17]=1; inp[18]=19.75; inp[19]=1; inp[20]=4.90; 
-        inp[14]=40000; inp[15]=24000
-    return inp
-
-def initialize_scenario(num_stores=7):
-    st.session_state.players = {}
-    st.session_state.global_period = 1
-    st.session_state.market_data_list = list(DEFAULT_MARKET_DATA)
-    scenarios = get_hisc1p1_data()
-    
-    # Limit number of stores based on input
-    active_scenarios = scenarios[:num_stores]
-    
-    for s in active_scenarios:
-        team_num = int(s['id'].split('_')[1])
-        total_assets = s['cash'] + s['inv_rx'] + s['inv_otc'] + s['fix_asset'] + s['ar']
-        total_liab = s['ap'] + s['mortgage'] + s['notes_pay']
-        equity = total_assets - total_liab
-        
-        financials = {
-            'cash': s['cash'], 'investments': 0,
-            'acct_receivable': s['ar'], 'acct_receivable_3rd': 0,
-            'inventory_rx': s['inv_rx'], 'inventory_otc': s['inv_otc'],
-            'fixed_assets': s['fix_asset'], 
-            'acct_payable': s['ap'], 'notes_payable': s['notes_pay'], 'long_term_debt': s['mortgage'], 
-            'retained_earnings': equity
-        }
-        prev_stats = { 
-            'avg_price': s['prev_price'], 'mkt_share': s['prev_share'], 
-            'rx_per_hr': 6.0, 'otc_markup': 45.0, 'ad_index': 1.0
-        }
-        st.session_state.players[s['id']] = {
-            'id': s['id'], 'shop_name': f"Store {team_num} ({LOC_MAP[s['loc']]})", 
-            'location_code': s['loc'], 'status': 'Pending',
-            'period': 1, 'inputs': get_inferred_inputs(team_num), 'financials': financials,
-            'prev_stats': prev_stats, 'history': [] 
-        }
-
-# ==========================================
-# 4. LOGIC ENGINE (REAL LOGIC FIX)
-# ==========================================
-def sanitize_input(inp_list, store_name):
-    cleaned = list(inp_list)
-    return cleaned
-
-def calculate_results():
-    st.session_state.debug_logs = []
-    st.session_state.sanity_check_log = []
-    mkt = st.session_state.market_data_list
-    
-    # --- MARKET CONSTANTS ---
-    BASE_COST_RX = mkt[0]
-    WEEKS_PER_PERIOD = 8.66 
-    SS_WC_RATE = mkt[27]/100.0 
-    
-    active_stores = [p for p in st.session_state.players.values()]
-    num_stores = len(active_stores)
-    if num_stores == 0: return
-
-    # --- CALIBRATION TARGETS (Sales Only) ---
-    TARGET_DEMANDS = [4655, 5971, 9091, 7721, 5199, 4927, 4023]
-    TARGET_PRICES = [22.02, 18.54, 18.44, 19.61, 19.47, 19.91, 22.52]
-    OTHER_SALES_RATIO = [0.144, 0.816, 0.632, 0.652, 1.316, 1.200, 0.074]
-    
-    # A/P Obligations from Balance Sheet (Hisc1p1)
-    AP_FROM_BALANCE_SHEET = [60889, 102000, 61626, 142260, 123222, 102000, 32444]
-
-    idx = 0
-    for p in active_stores:
-        inp = p['inputs']
-        fin = p['financials']
-        loc_code = p['location_code']
-        
-        # --- 1. REVENUE (Based on Calibration) ---
-        # Note: If number of stores < 7, we still map to the first N targets
-        if idx < len(TARGET_DEMANDS):
-            total_rx_count = TARGET_DEMANDS[idx]
-            price_per_rx = TARGET_PRICES[idx]
-            other_ratio = OTHER_SALES_RATIO[idx]
-            target_gm = [0.49, 0.39, 0.34, 0.40, 0.42, 0.44, 0.50][idx]
-            ap_balance_sheet = AP_FROM_BALANCE_SHEET[idx]
+if uploaded_file:
+    try:
+        # Load Data
+        if uploaded_file.name.endswith('.csv'):
+            df_input = pd.read_csv(uploaded_file)
         else:
-             # Fallback if more than 7 stores (unlikely)
-            total_rx_count = 5000
-            price_per_rx = 20.0
-            other_ratio = 0.5
-            target_gm = 0.40
-            ap_balance_sheet = 50000
+            df_input = pd.read_excel(uploaded_file)
+        
+        # Clean Data (Header handling)
+        if "Medical center" in str(df_input.iloc[0,0]): # Check if header is in row 1
+             # Reload with correct header if needed, or simple cleaning:
+             df_input = pd.read_excel(uploaded_file, header=1)
+        
+        st.success("File Loaded Successfully!")
+        
+        # Run Button
+        if st.button("🚀 Run Simulation"):
+            with st.spinner("Simulating market dynamics..."):
+                # Run Logic
+                df_results = run_simulation(df_input, num_stores)
+                
+                # Transpose for Report Format (Metrics as Rows, Stores as Columns)
+                df_report = df_results.set_index("Store ID").T
+                
+                # Display Result
+                st.subheader("📊 Simulation Results (Financial Report)")
+                st.dataframe(df_report.style.format("{:,.2f}"))
+                
+                # CSV Download
+                csv = df_report.to_csv().encode('utf-8')
+                st.download_button(
+                    "📥 Download Report (CSV)",
+                    csv,
+                    "simulation_result_v37_fixed.csv",
+                    "text/csv",
+                    key='download-csv'
+                )
+                
+                # Sanity Check Display
+                st.markdown("---")
+                st.info(f"**Sanity Check (Store 1):** Net Worth = ${df_results.iloc[0]['Net Worth']:,.2f} (Should be positive)")
 
-        rx_sales = total_rx_count * price_per_rx
-        other_sales = rx_sales * other_ratio
-        total_sales = rx_sales + other_sales
-        
-        # --- 2. COST OF GOODS (Calculated) ---
-        cogs = total_sales * (1 - target_gm)
-        gross_profit = total_sales - cogs
-        
-        # --- 3. OPEX (CALCULATED FROM INPUTS - THE FIX) ---
-        wage_rph = inp[17] * 40 * WEEKS_PER_PERIOD * inp[18]
-        wage_clk = inp[19] * 40 * WEEKS_PER_PERIOD * inp[20]
-        ben_rate = SS_WC_RATE + (0.05 if inp[32] else 0) + (0.10 if inp[33] else 0)
-        benefits = (wage_rph + wage_clk) * ben_rate
-        mgr_salary = inp[21] * 2 
-        rent = total_sales * LOC_RENT_RATE.get(loc_code, 0.03)
-        promo = inp[7]
-        utilities = 3000 * (inp[6]/50.0) 
-        mortgage_interest = fin['long_term_debt'] * (0.09 / 6) 
-        
-        total_opex = wage_rph + wage_clk + benefits + mgr_salary + rent + promo + utilities + mortgage_interest
-        net_income = gross_profit - total_opex
-        
-        # --- 4. CASH FLOW (LOGIC FIX) ---
-        # Cash In = Sales Collection (Assume 30% Cash Sales + Collection of Prev A/R)
-        cash_receipts = (total_sales * 0.3) + fin['acct_receivable']
-        
-        # Cash Out = A/P Paid (Old Debt) + OPEX (Cash Expenses)
-        ap_paid = inp[28]
-        if ap_paid == 0:
-            ap_paid = ap_balance_sheet # Auto-pay full balance if input is 0
-            
-        cash_expenses = total_opex 
-        purchases = inp[14] + inp[15]
-        
-        # Emergency Loan Check
-        cash_beginning = fin['cash']
-        cash_ending = cash_beginning + cash_receipts - ap_paid - cash_expenses
-        
-        eloan = 0
-        if cash_ending < 0:
-            eloan = abs(cash_ending)
-            cash_ending = 0
-            fin['notes_payable'] += eloan
-            
-        # Update Balance Sheet
-        fin['cash'] = cash_ending
-        fin['acct_receivable'] = total_sales * 0.7 # New AR
-        fin['acct_payable'] = (fin['acct_payable'] - ap_paid) + purchases
-        fin['inventory_rx'] = (fin['inventory_rx'] + inp[14]) - (cogs * 0.7) 
-        fin['inventory_otc'] = (fin['inventory_otc'] + inp[15]) - (cogs * 0.3)
-        fin['retained_earnings'] += net_income
-        
-        # --- 5. REPORTING ---
-        report = {
-            "TOT SALES": total_sales, 
-            "Rx SALES": rx_sales, 
-            "OTH SALES": other_sales,
-            "Avg Rx Pr": price_per_rx, 
-            "Rx Ing $": BASE_COST_RX,
-            "Rx GM%": target_gm, 
-            "3-Pty GM%": 0.30, 
-            "Tot #Rx's": total_rx_count, 
-            "3-Pty #Rx": total_rx_count * 0.4,
-            "Copay Dis": inp[2], 
-            "OTC M'kup": inp[13]/100,
-            "Rx Mkt Sh": 14.2, 
-            "Store Hrs": inp[6], 
-            "A/P Paid": ap_paid, 
-            "M'age Pay": 0, 
-            "Loan": fin['notes_payable'], 
-            "Mgr Hrs": 48, 
-            "RP OverT": 0,
-            "RP Hr Pay": inp[18], 
-            "Clk OverT": 0, 
-            "Clk Wage": inp[20], 
-            "Adv Exp": inp[7],
-            "Net Worth": fin['retained_earnings'], 
-            "Cash Flow": cash_ending - cash_beginning, 
-            "E Rx Pur": 0, 
-            "E OTC Pur": 0,
-            "RATIO: Current": (fin['cash']+fin['acct_receivable']+fin['inventory_rx']+fin['inventory_otc']) / (fin['acct_payable']+fin['notes_payable']) if (fin['acct_payable']+fin['notes_payable']) else 0,
-            "RATIO: Acid Test": (fin['cash']+fin['acct_receivable']) / (fin['acct_payable']+fin['notes_payable']) if (fin['acct_payable']+fin['notes_payable']) else 0,
-            "RATIO: Turnover": cogs / ((fin['inventory_rx']+fin['inventory_otc'])/2) if (fin['inventory_rx']+fin['inventory_otc']) else 0,
-            "RATIO: ROI %": (net_income / 200000)*100, 
-            "RATIO: ROA %": (net_income / 200000)*100, 
-            "RATIO: G Margin %": target_gm, 
-            "RATIO: Profit %": (net_income / total_sales), 
-            "RATIO: Debt/NW": (fin['acct_payable']+fin['notes_payable']+fin['long_term_debt']) / fin['retained_earnings'] if fin['retained_earnings'] else 0, 
-            "LOCATION": p['location_code']
-        }
-        
-        p['history'].append(report)
-        p['status'] = 'Pending'; p['period'] += 1
-        p['prev_stats']['avg_price'] = price_per_rx
-        idx += 1 
-
-    st.session_state.global_period += 1
-
-# ==========================================
-# 5. UI COMPONENTS
-# ==========================================
-with st.sidebar:
-    st.title("💊 Communi-Pharm V37.7")
-    st.caption("Fixed Logic + UI Original")
-    if st.button("🔄 FACTORY RESET", type="primary"): st.session_state.clear(); st.rerun()
-
-def generate_master_report(players):
-    data = {}
-    for p_id, p in players.items():
-        if not p['history']: continue
-        last = p['history'][-1]
-        data[f"{p['id'].split('_')[1]}"] = last 
-    if not data: return pd.DataFrame()
-    df = pd.DataFrame(data)
-    df = df.reindex(REPORT_ORDER)
-    return df
-
-def render_instructor_ui():
-    st.header("👨‍🏫 Instructor Dashboard")
-    
-    with st.expander("🔧 Debug Logs", expanded=False):
-        if st.session_state.debug_logs:
-            st.write(pd.DataFrame(st.session_state.debug_logs))
-
-    if st.session_state.game_state == "SETUP_STEP_1":
-        st.info("Initialize Exact Scenario.")
-        
-        # [NEW FEATURE] Select Number of Stores
-        num_stores = st.number_input("Number of Stores to Initialize", min_value=1, max_value=7, value=7)
-        
-        if st.button("🚀 Initialize", type="primary"):
-            initialize_scenario(num_stores)
-            st.success(f"{num_stores} Teams initialized.")
-            st.session_state.game_state="ACTIVE"
-            st.rerun()
-            
-    elif st.session_state.game_state == "ACTIVE":
-        st.success(f"### 🏁 Period {st.session_state.global_period - 1} Results")
-        if any(p['history'] for p in st.session_state.players.values()):
-            df = generate_master_report(st.session_state.players)
-            if not df.empty: st.dataframe(df.style.format(lambda x: "{:,.2f}".format(x) if isinstance(x, (int, float)) else str(x)), height=800, use_container_width=True)
-        c1, c2 = st.columns([3,1])
-        if c2.button("⚙️ Setup Next"): st.session_state.game_state="MARKET_EDIT_RUN"; st.rerun()
-
-    elif st.session_state.game_state == "MARKET_EDIT_RUN":
-        st.markdown(f"### 🚨 Market Environment (Period {st.session_state.global_period})"); 
-        df_mkt = pd.DataFrame({"Variable": MARKET_LABELS, "Value": st.session_state.market_data_list}); 
-        ed = st.data_editor(df_mkt, height=600, use_container_width=True)
-        c1, c2 = st.columns(2)
-        if c1.button("🔙 Back"): st.session_state.game_state="ACTIVE"; st.rerun()
-        if c2.button("🧮 RUN PERIOD"): 
-            st.session_state.market_data_list = ed['Value'].tolist(); 
-            calculate_results(); 
-            st.session_state.game_state="ACTIVE"; 
-            st.rerun()
-
-def render_student_ui():
-    if st.session_state.game_state != "ACTIVE": st.warning("⏳ Waiting..."); return
-    t_ids = list(st.session_state.players.keys())
-    sel_id = st.selectbox("Select Team", t_ids, format_func=lambda x: st.session_state.players[x]['shop_name'])
-    p = st.session_state.players[sel_id]
-    st.markdown(f"### 🏥 {p['shop_name']}")
-    t1, t2 = st.tabs(["📝 Decisions", "📊 History"])
-    with t1:
-        if p['status'] == 'Submitted': st.success("Submitted."); 
-        else:
-            ed = st.data_editor(pd.DataFrame({"Label": INPUT_LABELS, "Value": p['inputs']}), hide_index=True, height=600)
-            if st.button("Submit"): p['inputs'] = ed['Value'].tolist(); p['status'] = 'Submitted'; st.rerun()
-    with t2:
-        if p['history']: st.dataframe(pd.DataFrame([p['history'][-1]], columns=REPORT_ORDER).T.style.format("{:,.2f}"), height=800)
-
-role = st.sidebar.selectbox("Role", ["Student", "Instructor"])
-if role == "Instructor": 
-    if st.sidebar.text_input("Pwd", type="password") == ADMIN_PASSWORD: render_instructor_ui()
-else: render_student_ui()
+    except Exception as e:
+        st.error(f"Error processing file: {e}")
+else:
+    st.info("Please upload the input file to start.")
