@@ -5,13 +5,15 @@ import numpy as np
 # ==========================================
 # 1. CONSTANTS & BASELINE DATA
 # ==========================================
-st.set_page_config(page_title="PharmaSim V47.0 (Excel Style)", layout="wide")
+st.set_page_config(page_title="PharmaSim V48.0 (Complete Env)", layout="wide")
 
-# Store Categories & Weights
+# Store Categories
 STORE_CATEGORY = {
     0: "Medical", 1: "Neighbor", 2: "Shopping", 
     3: "Neighbor", 4: "Neighbor", 5: "Neighbor", 6: "Neighbor"
 }
+
+# Weights
 WEIGHTS = {
     "Medical": {"rx_price": 5, "adv": 11, "hours": 7, "delivery": 10, "records": 15, "credit": 3, "inventory": 10, "prev_share": 23, "otc_markup": 5, "otc_adv": 5, "otc_hours": 3},
     "Neighbor": {"rx_price": 5, "adv": 12, "hours": 10, "delivery": 6, "records": 8, "credit": 2, "inventory": 10, "prev_share": 15, "otc_markup": 15, "otc_adv": 10, "otc_hours": 15},
@@ -43,31 +45,34 @@ INIT_FINANCIALS = {
     "ap": [60889, 102000, 61626, 115000, 98000, 95000, 58000]
 }
 
-# --- ENV CONFIG MAPPING (For Table Display) ---
-# Key = Internal Variable Name, Label = Display Name in Table
+# --- ENV CONFIG MAPPING (Complete List) ---
+# Key = Internal Variable Name, Label = Display Name in Table, Value = Default from instruc1p1
 ENV_MAPPING = [
-    # General
-    {"key": "interest_rate", "label": "Interest Rate (%)", "value": 10.5},
-    {"key": "inflation", "label": "Inflation Rate (%)", "value": 1.1},
-    {"key": "periods_per_year", "label": "Periods per Year", "value": 6},
-    {"key": "ss_wc_rate", "label": "SS & WC Rate (%)", "value": 11.0},
-    {"key": "pass_book_rate", "label": "Pass Book Savings (%)", "value": 5.25},
-    {"key": "cd_interest_rate", "label": "CD Interest Rate (%)", "value": 7.88},
-    # Operations
-    {"key": "avg_ing_cost", "label": "Avg Ingredient Cost ($)", "value": 11.23},
-    {"key": "max_promo", "label": "Max Promo Expenditure ($)", "value": 1200},
-    {"key": "avg_sales_per_clerk", "label": "Avg Sales/Clerk ($)", "value": 28.5},
-    {"key": "max_rx_price", "label": "Max Rx Price ($)", "value": 23.0},
-    # 3rd Party
-    {"key": "pct_3rd_party", "label": "3rd Party Market (%)", "value": 46.43},
-    {"key": "avg_copay", "label": "Avg Copay ($)", "value": 2.0},
-    {"key": "avg_3rd_party_fee", "label": "Avg 3rd Party Fee ($)", "value": 2.75},
-    {"key": "3rd_party_lag", "label": "3rd Party Lag (%)", "value": 14.4},
-    # Inventory & Misc
-    {"key": "stockout_rx_index", "label": "Stockout Rx Index", "value": 77},
-    {"key": "stockout_other_index", "label": "Stockout Other Index", "value": 55},
-    {"key": "mutual_fund_price", "label": "Mutual Fund Price ($)", "value": 26.4},
-    {"key": "gm_slippage", "label": "GM Slippage Rate", "value": 0.1},
+    {"key": "avg_ing_cost", "label": "Average Ingredient Cost ($)", "value": 11.23},
+    {"key": "avg_copay", "label": "Average Copay Allowed ($)", "value": 2.0},
+    {"key": "avg_3rd_party_fee", "label": "Average Third-Party Fee ($)", "value": 2.75},
+    {"key": "pct_3rd_party", "label": "Percent Market Rx’s 3rd-Party (%)", "value": 46.43},
+    {"key": "max_promo", "label": "Maximum Promotion Expenditure ($)", "value": 1200},
+    {"key": "pct_ar_store1", "label": "% Sales A/R Store Type 1 (%)", "value": 30.2},
+    {"key": "pct_ar_store2", "label": "% A/R Sales Store Type 2 (%)", "value": 21.2},
+    {"key": "pct_ar_store3", "label": "% A/R Sales Store Type 3 (%)", "value": 9.34},
+    {"key": "interest_rate", "label": "Interest Rate for Period (%)", "value": 10.5},
+    {"key": "avg_rx_per_store", "label": "Average Number Rx Per Store (#)", "value": 5949},
+    {"key": "avg_other_sales", "label": "Average Other Sales Per Store ($)", "value": 74500},
+    {"key": "gm_slippage", "label": "Gross Margin Slippage Rate (%)", "value": 0.1},
+    {"key": "periods_per_year", "label": "Number Periods per Year (#)", "value": 6},
+    {"key": "3rd_party_lag", "label": "Third-Party Lag in Payment (%)", "value": 14.4},
+    {"key": "ar_lag", "label": "A/R Lag in Payment (%)", "value": 11.2},
+    {"key": "mutual_fund_price", "label": "Mutual Fund Transaction Price ($)", "value": 26.4},
+    {"key": "inflation", "label": "Current Inflation Rate (%)", "value": 1.1},
+    {"key": "stockout_rx_index", "label": "Stockout Rx Inventory Index", "value": 77},
+    {"key": "stockout_other_index", "label": "Stockout Other Inventory Index", "value": 55},
+    {"key": "pass_book_rate", "label": "Pass Book Savings Rate (%)", "value": 5.25},
+    {"key": "mutual_fund_next", "label": "Mutual Fund Next Period ($)", "value": 27.65},
+    {"key": "cd_interest_rate", "label": "Interest Rate on CD’s (%)", "value": 7.88},
+    {"key": "avg_sales_per_clerk", "label": "Average Dollar Sales/Clerk ($)", "value": 28.5},
+    {"key": "max_rx_price", "label": "Maximum Price for Rx’s ($)", "value": 23.0},
+    {"key": "ss_wc_rate", "label": "SS & WC as % of Salary & Wages (%)", "value": 11.0},
 ]
 
 INPUT_LABELS = [
@@ -85,7 +90,6 @@ if 'game_state' not in st.session_state:
     st.session_state.game_state = "SETUP"
     st.session_state.current_period = 1
     st.session_state.num_stores = 7
-    # Convert List to Dict for internal use
     st.session_state.market_env = {item['key']: item['value'] for item in ENV_MAPPING}
     st.session_state.players = {} 
 
@@ -135,7 +139,11 @@ def reset_game():
 def calculate_score(w, markup, promo, hours, delivery, records, credit, env):
     est_price = env['avg_ing_cost'] * (1 + markup/100) 
     score_price = (1.0 / est_price) * w["rx_price"] * 1000 
-    score_adv = (np.log1p(promo) / np.log1p(env['max_promo'])) * w["adv"]
+    
+    # Use max_promo from environment
+    max_promo_val = env.get('max_promo', 1200)
+    score_adv = (np.log1p(promo) / np.log1p(max_promo_val)) * w["adv"]
+    
     score_hours = (hours / 50) * w["hours"]
     score_service = (delivery * w["delivery"]) + (records * w["records"]) + (credit * w["credit"])
     score_fixed = w["inventory"] + w["prev_share"]
@@ -159,7 +167,6 @@ def run_period_simulation():
         base_in = BASELINE_INPUTS[ref_idx]
         
         curr_score = calculate_score(w, curr_markup, curr_promo, curr_hours, curr_del, curr_rec, curr_cred, env)
-        # Base score calculation needs a consistent baseline env, creating a temporary dict
         base_env = {item['key']: item['value'] for item in ENV_MAPPING}
         base_score = calculate_score(w, base_in['markup'], base_in['promo'], base_in['hours'], base_in['del'], base_in['rec'], base_in['cred'], base_env)
         
@@ -199,6 +206,8 @@ def run_period_simulation():
         purchases = inp[10] + inp[11]
         ap_payment = inp[12]
         
+        # Cash Flow Logic with 3rd Party Impact
+        # Basic Collection logic: if 3rd party % is high, collection is slower (simulated)
         collection_rate = 0.95 - (max(0, env['pct_3rd_party'] - 40) * 0.005)
         cash_in = total_sales * collection_rate
         
@@ -256,7 +265,6 @@ def get_leaderboard():
 
 def get_current_date_str():
     env = st.session_state.market_env
-    # Fallback to default if keys missing (during init)
     d = env.get('date_day', 30)
     m = env.get('date_month', 6)
     y = env.get('date_year', 89)
@@ -280,12 +288,11 @@ def render_instructor():
         st.dataframe(get_leaderboard().style.format({"Net Worth": "${:,.0f}", "Last Profit": "${:,.0f}"}), use_container_width=True)
         st.divider()
         
-        # --- NEW: TABLE BASED ENV CONTROL ---
+        # --- TABLE BASED ENV CONTROL ---
         st.subheader(f"⚙️ Environment Control: Period {st.session_state.current_period}")
         st.caption("Double click any value to edit. Press ENTER to move to next row.")
         
-        # Prepare Data for Table
-        # We construct a DF from the current mapping structure, filling values from session_state
+        # Construct Table Data
         current_env_data = []
         for item in ENV_MAPPING:
             current_val = st.session_state.market_env.get(item['key'], item['value'])
@@ -293,11 +300,10 @@ def render_instructor():
             
         df_env = pd.DataFrame(current_env_data)
         
-        # Display Editor
         edited_df = st.data_editor(
-            df_env[["Variable Name", "Value"]], # Only show Label and Value
+            df_env[["Variable Name", "Value"]],
             use_container_width=True,
-            height=600,
+            height=800, # Increased height for full list
             column_config={
                 "Variable Name": st.column_config.TextColumn("Variable", disabled=True),
                 "Value": st.column_config.NumberColumn("Value", format="%.2f")
@@ -305,8 +311,6 @@ def render_instructor():
         )
         
         if st.button("💾 Save Environment Changes"):
-            # Update session state from the edited dataframe
-            # We match the row index back to the ENV_MAPPING keys
             for index, row in edited_df.iterrows():
                 key = ENV_MAPPING[index]['key']
                 st.session_state.market_env[key] = row['Value']
@@ -347,7 +351,6 @@ def render_student():
     
     with tab1:
         st.caption("Edit values in the table below. Press Enter to confirm/move.")
-        # Table based Input
         df_input = pd.DataFrame({"Decision Parameter": INPUT_LABELS, "Value": player['inputs']})
         
         edited_inputs = st.data_editor(
@@ -370,7 +373,6 @@ def render_student():
         if player['history']:
             st.subheader("Performance History")
             hist = pd.DataFrame(player['history']).set_index("Period")
-            # Show as a clean table (readonly)
             st.dataframe(hist.style.format("{:,.2f}"), use_container_width=True)
             
             last = player['history'][-1]
@@ -387,11 +389,10 @@ def render_student():
 # ==========================================
 # 6. MAIN APP
 # ==========================================
-st.sidebar.title("💊 PharmaSim V47")
+st.sidebar.title("💊 PharmaSim V48")
 role = st.sidebar.radio("Role:", ["Student", "Instructor"])
 
 if role == "Instructor":
     if st.sidebar.text_input("🔑 Password", type="password") == "admin": render_instructor()
     else: st.info("Login required.")
 else: render_student()
-
