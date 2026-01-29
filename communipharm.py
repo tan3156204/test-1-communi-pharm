@@ -68,10 +68,6 @@ ENV_MAPPING = [
     {"key": "stockout_other_index", "label": "Stockout Other Index", "value": 55},
     {"key": "mutual_fund_price", "label": "Mutual Fund Price ($)", "value": 26.4},
     {"key": "gm_slippage", "label": "GM Slippage Rate", "value": 0.1},
-    # Date (Cosmetic)
-    {"key": "date_day", "label": "Closing Date: Day", "value": 30},
-    {"key": "date_month", "label": "Closing Date: Month", "value": 6},
-    {"key": "date_year", "label": "Closing Date: Year", "value": 89},
 ]
 
 INPUT_LABELS = [
@@ -398,3 +394,4 @@ if role == "Instructor":
     if st.sidebar.text_input("🔑 Password", type="password") == "admin": render_instructor()
     else: st.info("Login required.")
 else: render_student()
+
