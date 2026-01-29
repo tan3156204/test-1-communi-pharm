@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 0. CONFIG & UTILS
 # ==========================================
-st.set_page_config(page_title="PharmaSim V54.3 (Stable)", layout="wide")
+st.set_page_config(page_title="PharmaSim V55.0 (Full Env)", layout="wide")
 
 def force_reset():
     st.session_state.clear()
@@ -17,6 +17,12 @@ def safe_fmt(x):
     return str(x)
 
 def get_current_date_str():
+    # Try to build date from Env if available
+    if 'market_env' in st.session_state:
+        d = st.session_state.market_env.get('date_day', 30)
+        m = st.session_state.market_env.get('date_month', 6)
+        y = st.session_state.market_env.get('date_year', 89)
+        return f"{int(d)}/{int(m)}/19{int(y)}"
     return "30/06/1989"
 
 # ==========================================
@@ -48,16 +54,33 @@ BASELINE_TARGETS = {
     "other_sales": [13136, 85384, 97425, 87573, 123698, 108372, 5911],
 }
 
+# --- RESTORED FULL ENVIRONMENT LIST (28 Variables) ---
 ENV_MAPPING = [
     {"key": "avg_ing_cost", "label": "Average Ingredient Cost ($)", "value": 11.23},
     {"key": "avg_copay", "label": "Average Copay Allowed ($)", "value": 2.0},
     {"key": "avg_3rd_party_fee", "label": "Average Third-Party Fee ($)", "value": 2.75},
     {"key": "pct_3rd_party", "label": "Percent Market Rx’s 3rd-Party (%)", "value": 46.43},
     {"key": "max_promo", "label": "Maximum Promotion Expenditure ($)", "value": 1200},
+    {"key": "pct_ar_store1", "label": "% Sales A/R Store Type 1 (%)", "value": 30.2},
+    {"key": "pct_ar_store2", "label": "% A/R Sales Store Type 2 (%)", "value": 21.2},
+    {"key": "pct_ar_store3", "label": "% A/R Sales Store Type 3 (%)", "value": 9.34},
     {"key": "interest_rate", "label": "Interest Rate for Period (%)", "value": 10.5},
-    {"key": "inflation", "label": "Current Inflation Rate (%)", "value": 1.1},
-    {"key": "ss_wc_rate", "label": "SS & WC as % of Salary & Wages (%)", "value": 11.0},
+    {"key": "avg_rx_per_store", "label": "Average Number Rx Per Store (#)", "value": 5949},
+    {"key": "avg_other_sales", "label": "Average Other Sales Per Store ($)", "value": 74500},
+    {"key": "gm_slippage", "label": "Gross Margin Slippage Rate (%)", "value": 0.1},
     {"key": "periods_per_year", "label": "Number Periods per Year (#)", "value": 6},
+    {"key": "3rd_party_lag", "label": "Third-Party Lag in Payment (%)", "value": 14.4},
+    {"key": "ar_lag", "label": "A/R Lag in Payment (%)", "value": 11.2},
+    {"key": "mutual_fund_price", "label": "Mutual Fund Transaction Price ($)", "value": 26.4},
+    {"key": "inflation", "label": "Current Inflation Rate (%)", "value": 1.1},
+    {"key": "stockout_rx_index", "label": "Stockout Rx Inventory Index", "value": 77},
+    {"key": "stockout_other_index", "label": "Stockout Other Inventory Index", "value": 55},
+    {"key": "pass_book_rate", "label": "Pass Book Savings Rate (%)", "value": 5.25},
+    {"key": "mutual_fund_next", "label": "Mutual Fund Next Period ($)", "value": 27.65},
+    {"key": "cd_interest_rate", "label": "Interest Rate on CD’s (%)", "value": 7.88},
+    {"key": "avg_sales_per_clerk", "label": "Average Dollar Sales/Clerk ($)", "value": 28.5},
+    {"key": "max_rx_price", "label": "Maximum Price for Rx’s ($)", "value": 23.0},
+    {"key": "ss_wc_rate", "label": "SS & WC as % of Salary & Wages (%)", "value": 11.0},
     {"key": "date_month", "label": "Closing Date: Month", "value": 6},
     {"key": "date_day", "label": "Closing Date: Day", "value": 30},
     {"key": "date_year", "label": "Closing Date: Year", "value": 89},
@@ -93,7 +116,7 @@ OUTPUT_LABELS = [
 ]
 
 # ==========================================
-# 2. STATE INITIALIZATION (MUST BE BEFORE UI)
+# 2. STATE INITIALIZATION
 # ==========================================
 if 'game_state' not in st.session_state:
     st.session_state.game_state = "SETUP"
@@ -108,6 +131,7 @@ if 'game_state' not in st.session_state:
 def init_game(n_stores):
     st.session_state.players = {}
     st.session_state.current_period = 1
+    # Ensure environment is re-initialized with full list
     st.session_state.market_env = {item['key']: item['value'] for item in ENV_MAPPING}
     
     init_cash = [8746, 2500, 2500, 2200, 2500, 2200, 5000]
@@ -185,8 +209,10 @@ def run_period_simulation():
         w = WEIGHTS[cat]
         base_in = BASELINE_INPUTS[ref_idx]
         
-        curr_score = calculate_score(w, curr_markup, curr_promo, curr_hours, curr_del, curr_rec, curr_cred, env)
+        # Build temp env for score calculation (supports full list)
         base_env = {item['key']: item['value'] for item in ENV_MAPPING}
+        
+        curr_score = calculate_score(w, curr_markup, curr_promo, curr_hours, curr_del, curr_rec, curr_cred, env)
         base_score = calculate_score(w, base_in['markup'], base_in['promo'], base_in['hours'], base_in['del'], base_in['rec'], base_in['cred'], base_env)
         
         ratio = curr_score / base_score
@@ -285,7 +311,6 @@ def run_period_simulation():
         res["DEBUG: Cash In"] = cash_in
         res["DEBUG: Cash Out"] = total_cash_out
         
-        # Fill extra fields
         res["Avg Rx Pr"] = actual_rx_price
         res["Rx Ing $"] = env['avg_ing_cost']
         res["Rx GM%"] = (sales_rx - cogs_rx)/sales_rx if sales_rx else 0
@@ -324,7 +349,7 @@ def get_leaderboard():
     return df
 
 # ==========================================
-# 4. UI FUNCTIONS (DEFINED BEFORE USE)
+# 4. UI FUNCTIONS
 # ==========================================
 def render_instructor():
     st.header(f"👨‍🏫 Instructor Dashboard (Date: {get_current_date_str()})")
@@ -361,8 +386,26 @@ def render_instructor():
 
         with tab2:
             st.subheader("⚙️ Market Variables")
-            df_env = pd.DataFrame([{"Variable": k, "Value": v} for k, v in st.session_state.market_env.items()])
-            st.dataframe(df_env, use_container_width=True)
+            # Convert dict to df for editing
+            current_env_data = []
+            for item in ENV_MAPPING:
+                # Use value from session_state if available, else default
+                key = item['key']
+                val = st.session_state.market_env.get(key, item['value'])
+                current_env_data.append({"Variable Name": item['label'], "Value": val, "Key": key})
+            
+            df_env = pd.DataFrame(current_env_data)
+            edited_df = st.data_editor(
+                df_env[["Variable Name", "Value"]],
+                use_container_width=True, height=800,
+                column_config={"Variable Name": st.column_config.TextColumn("Variable", disabled=True), "Value": st.column_config.NumberColumn("Value", format="%.2f")}
+            )
+            
+            if st.button("💾 Save Environment Changes"):
+                for index, row in edited_df.iterrows():
+                    key = current_env_data[index]['Key']
+                    st.session_state.market_env[key] = row['Value']
+                st.success("Environment Updated Successfully!")
 
         with tab3:
             st.subheader("🎮 Simulation Control")
@@ -427,9 +470,9 @@ def render_student():
         st.dataframe(get_leaderboard(), use_container_width=True)
 
 # ==========================================
-# 5. MAIN EXECUTION (MUST BE LAST)
+# 5. MAIN EXECUTION
 # ==========================================
-st.sidebar.title("💊 PharmaSim V54.3 (Stable)")
+st.sidebar.title("💊 PharmaSim V55.0")
 
 if st.sidebar.button("🔴 FORCE RESET & CLEAR DATA", type="primary"):
     force_reset()
