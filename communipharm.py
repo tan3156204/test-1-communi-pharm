@@ -5,13 +5,12 @@ import numpy as np
 # ==========================================
 # 0. FORCE RESET UTILITY
 # ==========================================
-# ฟังก์ชันนี้จะช่วยล้างค่าขยะที่ค้างอยู่ใน Memory ของ Streamlit
 def force_reset():
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
 
-st.set_page_config(page_title="PharmaSim V55 (Debug Mode)", layout="wide")
+st.set_page_config(page_title="PharmaSim V54.1 (Fixed)", layout="wide")
 
 # ==========================================
 # 1. CONSTANTS & CALIBRATION
@@ -27,15 +26,15 @@ WEIGHTS = {
     "Shopping": {"rx_price": 10, "adv": 15, "hours": 12, "delivery": 1, "records": 1, "credit": 1, "inventory": 10, "prev_share": 5, "otc_markup": 20, "otc_adv": 10, "otc_hours": 15}
 }
 
-# Values from Input C1P1 (Corrected)
+# Baseline Inputs (Updated Clerks from inputc1p1 for accuracy)
 BASELINE_INPUTS = [
-    {"markup": 60, "promo": 600, "hours": 46, "del": 1, "rec": 1, "cred": 1, "pharm": 0, "ap_paid": 60889, "rx_pur": 40000, "otc_pur": 16000},
-    {"markup": 30, "promo": 1500, "hours": 60, "del": 1, "rec": 1, "cred": 0, "pharm": 1, "ap_paid": 102000, "rx_pur": 60000, "otc_pur": 80000},
-    {"markup": 30, "promo": 1900, "hours": 70, "del": 0, "rec": 1, "cred": 0, "pharm": 1.3, "ap_paid": 61626, "rx_pur": 65000, "otc_pur": 120000},
-    {"markup": 40, "promo": 1500, "hours": 70, "del": 0, "rec": 0, "cred": 0, "pharm": 1.5, "ap_paid": 115000, "rx_pur": 65000, "otc_pur": 145000},
-    {"markup": 35, "promo": 2200, "hours": 90, "del": 0, "rec": 0, "cred": 1, "pharm": 1.5, "ap_paid": 98000, "rx_pur": 85000, "otc_pur": 145000},
-    {"markup": 38, "promo": 3000, "hours": 75, "del": 0, "rec": 1, "cred": 0, "pharm": 1.75, "ap_paid": 95000, "rx_pur": 65000, "otc_pur": 175000},
-    {"markup": 49, "promo": 600, "hours": 48, "del": 0, "rec": 1, "cred": 1, "pharm": 1, "ap_paid": 58000, "rx_pur": 40000, "otc_pur": 24000}
+    {"markup": 60, "promo": 600, "hours": 46, "del": 1, "rec": 1, "cred": 1, "pharm": 0, "clerk": 1.2, "ap_paid": 60889, "rx_pur": 40000, "otc_pur": 16000},
+    {"markup": 30, "promo": 1500, "hours": 60, "del": 1, "rec": 1, "cred": 0, "pharm": 1, "clerk": 6.6, "ap_paid": 102000, "rx_pur": 60000, "otc_pur": 80000},
+    {"markup": 30, "promo": 1900, "hours": 70, "del": 0, "rec": 1, "cred": 0, "pharm": 1.3, "clerk": 7.0, "ap_paid": 61626, "rx_pur": 65000, "otc_pur": 120000},
+    {"markup": 40, "promo": 1500, "hours": 70, "del": 0, "rec": 0, "cred": 0, "pharm": 1.5, "clerk": 6.5, "ap_paid": 115000, "rx_pur": 65000, "otc_pur": 145000},
+    {"markup": 35, "promo": 2200, "hours": 90, "del": 0, "rec": 0, "cred": 1, "pharm": 1.5, "clerk": 8.9, "ap_paid": 98000, "rx_pur": 85000, "otc_pur": 145000},
+    {"markup": 38, "promo": 3000, "hours": 75, "del": 0, "rec": 1, "cred": 0, "pharm": 1.75, "clerk": 8.0, "ap_paid": 95000, "rx_pur": 65000, "otc_pur": 175000},
+    {"markup": 49, "promo": 600, "hours": 48, "del": 0, "rec": 1, "cred": 1, "pharm": 1, "clerk": 1.0, "ap_paid": 58000, "rx_pur": 40000, "otc_pur": 24000}
 ]
 
 BASELINE_TARGETS = {
@@ -110,26 +109,21 @@ def init_game(n_stores):
         d[3] = float(base['del']); d[4] = float(base['rec']); d[5] = float(base['cred'])
         d[6] = float(base['hours']); d[7] = float(base['promo'])
         
-        # Purchases (CRITICAL for AP Calc)
         d[14] = float(base['rx_pur'])
         d[15] = float(base['otc_pur'])
         
-        # Labor
         d[16] = float(base['pharm']) 
         d[17] = 20.0 # Pharm Rate
-        d[18] = 4.0 
-        d[19] = 5.0 
+        d[18] = float(base['clerk']) # Corrected Clerk Count
+        d[19] = 5.0 # Clerk Rate
         d[20] = 8000.0 # Mgr Salary
         
-        # Financials
-        d[28] = float(base['ap_paid']) # This is what you PAY this period
+        d[28] = float(base['ap_paid']) 
         
-        # Beginning Balance Logic
-        # We assume Beginning AP was roughly equal to what they decided to pay
-        # This ensures they don't start with massive debt
+        # Initialize Financial State
         init_ap_val = base['ap_paid'] 
         init_ar_val = 22000 
-        init_inv = 130000 # Approx
+        init_inv = 130000 
         
         nw_start = init_cash[ref_idx] + init_inv + init_ar_val - init_ap_val
         
@@ -141,7 +135,7 @@ def init_game(n_stores):
                 "cash": init_cash[ref_idx],
                 "inventory": init_inv,
                 "ar": init_ar_val, 
-                "ap": init_ap_val, # Beginning AP
+                "ap": init_ap_val,
                 "loan": 0,
                 "net_worth": nw_start
             },
@@ -181,7 +175,7 @@ def run_period_simulation():
         pharmacists = inp[16]; wage_pharm = inp[17]
         clerks = inp[18]; wage_clerk = inp[19]
         mgr_sal = inp[20]; mgr_hours = inp[22]
-        mortgage = inp[23]; ap_paid = inp[28] # Value from input (approx 60k-100k)
+        mortgage = inp[23]; ap_paid = inp[28]
         
         # --- 2. SALES ---
         cat = STORE_CATEGORY.get(ref_idx, "Neighbor")
@@ -189,11 +183,14 @@ def run_period_simulation():
         base_in = BASELINE_INPUTS[ref_idx]
         
         curr_score = calculate_score(w, curr_markup, curr_promo, curr_hours, curr_del, curr_rec, curr_cred, env)
-        base_score = calculate_score(w, base_in['markup'], base_in['promo'], base_in['hours'], base_in['del'], base_in['rec'], base_in['cred'], env)
+        base_env = {item['key']: item['value'] for item in ENV_MAPPING}
+        base_score = calculate_score(w, base_in['markup'], base_in['promo'], base_in['hours'], base_in['del'], base_in['rec'], base_in['cred'], base_env)
         ratio = curr_score / base_score
         
+        otc_mult = ratio * ((1 + 30/100) / (1 + otc_markup/100))
+        
         actual_rx_vol = BASELINE_TARGETS['rx_demand'][ref_idx] * ratio
-        actual_other_sales = BASELINE_TARGETS['other_sales'][ref_idx] * ratio
+        actual_other_sales = BASELINE_TARGETS['other_sales'][ref_idx] * otc_mult
         
         actual_rx_price = env['avg_ing_cost'] * (1 + curr_markup/100)
         sales_rx = actual_rx_vol * actual_rx_price
@@ -204,41 +201,60 @@ def run_period_simulation():
         cogs_other = actual_other_sales / (1 + otc_markup/100)
         total_cogs = cogs_rx + cogs_other
         
+        avail_inv = fin['inventory'] + rx_purch + otc_purch
+        e_rx_pur = 0; e_otc_pur = 0
+        if total_cogs > avail_inv:
+            shortage = total_cogs - avail_inv
+            e_rx_pur = shortage * 0.7 * 1.1 
+            e_otc_pur = shortage * 0.3 * 1.1
+            total_cogs = avail_inv 
+            
         weeks = 52.0 / env['periods_per_year']
         labor_cost = (pharmacists * curr_hours * wage_pharm * weeks) + (clerks * curr_hours * wage_clerk * weeks)
-        if pharmacists == 0: labor_cost = (clerks * curr_hours * wage_clerk * weeks) # Owner works
+        if pharmacists == 0: labor_cost = (clerks * curr_hours * wage_clerk * weeks) 
         
-        opex_cash = labor_cost + mgr_sal + rent = (total_sales * 0.03) + curr_promo + 2000
+        # FIX: Explicit calculation of OpEx
+        rent = total_sales * (0.045 if pid == 0 else 0.03)
+        misc_ops = (total_sales * 0.015 + 2000)
+        benefits = labor_cost * (env['ss_wc_rate'] / 100.0)
         
-        # --- 4. CASH FLOW DEBUGGING ---
-        # Beginning Cash
-        start_cash = fin['cash']
+        # Total Operating Expenses Paid in Cash
+        opex_cash = labor_cost + benefits + rent + curr_promo + misc_ops + mgr_sal + mortgage
         
-        # Cash In
-        # Assume 80% of Sales collected immediately + 20% of OLD AR
-        # Simplified: Cash In = Total Sales (assuming steady state for simplicity)
-        cash_in = total_sales * 0.90 # 90% collection rate
+        # --- 4. CASH FLOW ---
+        # Inflows: Cash Sales (assumed 90% collection for sim simplicity)
+        cash_in = total_sales * 0.90
         
-        # Cash Out
-        # THIS IS THE KEY: Cash Out = Expenses + AP Payment
-        # ap_paid comes from Input. If Input says 60,000, we pay 60,000.
+        # Outflows: OpEx + AP Paid
         total_cash_out = opex_cash + ap_paid
         
         net_cash_flow = cash_in - total_cash_out
+        end_cash = fin['cash'] + net_cash_flow
         
-        end_cash = start_cash + net_cash_flow
+        # Emergency Loan
+        e_loan = 0; interest = 0
+        if end_cash < 2500:
+            e_loan = 2500 - end_cash
+            end_cash = 2500
+            interest = e_loan * (env['interest_rate']/100.0) / env['periods_per_year']
         
-        # --- 5. FINANCIAL POSITION UPDATE ---
-        # Update AP
-        # New AP = Old AP + New Purchases - Paid
-        old_ap = fin['ap']
-        new_ap = old_ap + rx_purch + otc_purch - ap_paid
-        if new_ap < 0: new_ap = 0 # Cannot have negative debt
+        total_expenses_profit = opex_cash + interest
+        gross_profit = total_sales - total_cogs
+        net_profit = gross_profit - total_expenses_profit
         
-        fin['ap'] = new_ap
+        # --- 5. FINANCIAL UPDATE ---
         fin['cash'] = end_cash
+        fin['loan'] += e_loan
+        fin['ap'] = fin['ap'] + rx_purch + otc_purch + e_rx_pur + e_otc_pur - ap_paid
+        if fin['ap'] < 0: fin['ap'] = 0
+        
+        fin['inventory'] = fin['inventory'] + rx_purch + otc_purch + e_rx_pur + e_otc_pur - total_cogs
         fin['ar'] = (fin['ar'] + total_sales) - cash_in
-        fin['inventory'] = fin['inventory'] + rx_purch + otc_purch - total_cogs
+        
+        total_assets = fin['cash'] + fin['inventory'] + fin['ar']
+        total_liab = fin['ap'] + fin['loan']
+        net_worth = total_assets - total_liab
+        fin['net_worth'] = net_worth
         
         # --- 6. OUTPUTS ---
         res = {}
@@ -246,22 +262,28 @@ def run_period_simulation():
         res["Rx SALES"] = sales_rx
         res["OTH SALES"] = actual_other_sales
         res["A/P Paid"] = ap_paid
-        res["Net Worth"] = (fin['cash'] + fin['inventory'] + fin['ar']) - (fin['ap'] + fin['loan'])
+        res["Net Worth"] = net_worth
         res["Cash Flow"] = net_cash_flow
         
-        # DIAGNOSTIC FIELDS (To find the -900k culprit)
-        res["[DEBUG] Start AP"] = old_ap
-        res["[DEBUG] Purchases"] = rx_purch + otc_purch
-        res["[DEBUG] AP Paid"] = ap_paid
-        res["[DEBUG] End AP"] = new_ap
+        res["Current"] = total_assets / total_liab if total_liab else 0
+        res["Acid Test"] = (fin['cash'] + fin['ar']) / total_liab if total_liab else 0
+        
+        annual_cogs = total_cogs * env['periods_per_year']
+        res["Turnover"] = annual_cogs / fin['inventory'] if fin['inventory'] else 0
+        
+        annual_profit = net_profit * env['periods_per_year']
+        res["ROI"] = (annual_profit / net_worth) * 100 if net_worth else 0
+        res["ROA"] = (annual_profit / total_assets) * 100 if total_assets else 0
+        
+        res["G Margin"] = (gross_profit / total_sales) * 100 if total_sales else 0
+        res["Profit"] = net_profit
+        res["Debt/NW"] = total_liab / net_worth if net_worth else 0
+        res["LOCATION"] = p['type']
+        
         res["[DEBUG] Cash In"] = cash_in
         res["[DEBUG] Cash Out"] = total_cash_out
         
-        # Standard Ratios
-        res["Current"] = (fin['cash'] + fin['ar'] + fin['inventory']) / fin['ap'] if fin['ap'] > 0 else 99
-        res["Profit"] = total_sales - total_cogs - opex_cash
-        
-        # Fill rest with 0 for compatibility
+        # Fill zeros
         for k in OUTPUT_LABELS:
             if k not in res: res[k] = 0
             
@@ -273,7 +295,7 @@ def run_period_simulation():
 # ==========================================
 # 4. UI
 # ==========================================
-st.sidebar.title("💊 PharmaSim V55 (Reset Tool)")
+st.sidebar.title("💊 PharmaSim V54.1")
 
 if st.sidebar.button("🔴 FORCE RESET & CLEAR DATA", type="primary"):
     force_reset()
@@ -283,39 +305,49 @@ role = st.sidebar.radio("Role:", ["Student", "Instructor"])
 def safe_fmt(x):
     return "{:,.2f}".format(x) if isinstance(x, (int, float)) else x
 
+def get_current_date_str():
+    return "30/06/1989"
+
 if role == "Instructor":
-    st.header("👨‍🏫 Instructor (Diagnostics)")
+    st.header("👨‍🏫 Instructor")
     
     if st.session_state.game_state == "SETUP":
         if st.button("Start Game"):
             init_game(7)
             st.rerun()
     else:
-        if st.button("▶️ Run Period"):
-            run_period_simulation()
-            st.rerun()
-            
-        st.divider()
-        st.subheader("🕵️ CASH FLOW INVESTIGATION")
-        if st.session_state.current_period > 1:
-            debug_data = []
-            for name, p in st.session_state.players.items():
-                if p['history']:
-                    last = p['history'][-1]
-                    debug_data.append({
-                        "Store": p['name'],
-                        "1. Cash In (Sales)": safe_fmt(last.get("[DEBUG] Cash In", 0)),
-                        "2. OpEx (Labor/Rent)": safe_fmt(last.get("Cash Out", 0) - last.get("A/P Paid", 0)), # Approx
-                        "3. AP Paid (The Culprit?)": safe_fmt(last.get("[DEBUG] AP Paid", 0)),
-                        "4. Total Cash Out": safe_fmt(last.get("[DEBUG] Cash Out", 0)),
-                        "5. Net Cash Flow": safe_fmt(last.get("Cash Flow", 0)),
-                        "6. Ending AP Debt": safe_fmt(last.get("[DEBUG] End AP", 0))
-                    })
-            st.dataframe(pd.DataFrame(debug_data))
-            
-            st.subheader("📊 Full Report")
-            full_data = {p['name']: [p['history'][-1][k] for k in OUTPUT_LABELS] for p in st.session_state.players.values()}
-            st.dataframe(pd.DataFrame(full_data, index=OUTPUT_LABELS).style.format(safe_fmt))
+        tab1, tab2, tab3 = st.tabs(["📊 Reports", "⚙️ Environment", "🎮 Controls"])
+        
+        with tab1:
+            st.subheader("📊 Full Market Report")
+            if st.session_state.current_period > 1:
+                combined_data = {}
+                for pid, p in st.session_state.players.items():
+                    if p['history']:
+                        last_res = p['history'][-1]
+                        combined_data[p['name']] = [last_res.get(k, 0) for k in OUTPUT_LABELS]
+                
+                df_combined = pd.DataFrame(combined_data, index=OUTPUT_LABELS)
+                st.dataframe(df_combined.style.format(safe_fmt), use_container_width=True, height=1000)
+            else:
+                st.info("Run Period 1 First")
+
+        with tab2:
+            st.subheader("⚙️ Env")
+            df_env = pd.DataFrame([{"Variable": k, "Value": v} for k, v in st.session_state.market_env.items()])
+            st.dataframe(df_env, use_container_width=True)
+
+        with tab3:
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                status_data = [{"Store": p['name'], "Status": p['status']} for p in st.session_state.players.values()]
+                st.dataframe(pd.DataFrame(status_data).T, use_container_width=True)
+            with c2:
+                if st.button("▶️ RUN PERIOD", type="primary"):
+                    run_period_simulation()
+                    st.rerun()
+            if st.button("End Game"):
+                reset_game()
 
 else:
     st.header("Student View")
@@ -323,9 +355,13 @@ else:
         sel = st.selectbox("Store", list(st.session_state.players.keys()))
         p = st.session_state.players[sel]
         
-        with st.expander("Edit Inputs", expanded=True):
+        tab1, tab2 = st.tabs(["📝 Inputs", "📊 Results"])
+        with tab1:
             df_in = pd.DataFrame({"Param": INPUT_LABELS, "Value": p['inputs']})
             edited = st.data_editor(df_in, use_container_width=True, height=600)
             if st.button("Save"):
                 p['inputs'] = edited['Value'].tolist()
                 st.success("Saved")
+        with tab2:
+            if p['history']:
+                st.dataframe(pd.DataFrame(p['history']).T, use_container_width=True)
