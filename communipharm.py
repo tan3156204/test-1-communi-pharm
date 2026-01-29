@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONSTANTS & BASELINE DATA
 # ==========================================
-st.set_page_config(page_title="PharmaSim V50.0 (Full Outputs)", layout="wide")
+st.set_page_config(page_title="PharmaSim V51.0 (Fixed & Full View)", layout="wide")
 
 # Store Categories
 STORE_CATEGORY = {
@@ -169,7 +169,7 @@ def init_game(n_stores):
             "financials": {
                 "cash": INIT_FINANCIALS['cash'][ref_idx],
                 "inventory": INIT_FINANCIALS['inventory'][ref_idx],
-                "ar": 20000.0, # Initial AR Assumption
+                "ar": 20000.0, 
                 "ap": INIT_FINANCIALS['ap'][ref_idx],
                 "loan": 0,
                 "net_worth": init_nw
@@ -201,8 +201,6 @@ def calculate_score(w, markup, promo, hours, delivery, records, credit, env):
 
 def run_period_simulation():
     env = st.session_state.market_env
-    
-    # 1. Pre-calculate Total Market Demand (Simplified for share calc)
     total_baseline_rx = sum(BASELINE_TARGETS['rx_demand'])
     
     for pid, p in st.session_state.players.items():
@@ -210,21 +208,18 @@ def run_period_simulation():
         inp = p['inputs']
         fin = p['financials']
         
-        # --- INPUTS ---
-        curr_markup = inp[0]
-        copay_disc = inp[2]
+        # Inputs
+        curr_markup = inp[0]; copay_disc = inp[2]
         curr_del = inp[3]; curr_rec = inp[4]; curr_cred = inp[5]
-        curr_hours = inp[6]
-        curr_promo = inp[7]
-        otc_markup = inp[13] if inp[13] > 0 else 30.0 # Default if 0
+        curr_hours = inp[6]; curr_promo = inp[7]
+        otc_markup = inp[13] if inp[13] > 0 else 30.0
         rx_purch = inp[14]; otc_purch = inp[15]
         pharmacists = max(inp[16], 1.0); wage_pharm = inp[17]
         clerks = inp[18]; wage_clerk = inp[19]
         mgr_sal = inp[20]; mgr_hours = inp[22]
-        mortgage = inp[23]
-        ap_paid = inp[28]
+        mortgage = inp[23]; ap_paid = inp[28]
         
-        # --- DEMAND & SALES ---
+        # Demand & Sales
         cat = STORE_CATEGORY.get(ref_idx, "Neighbor")
         w = WEIGHTS[cat]
         base_in = BASELINE_INPUTS[ref_idx]
@@ -234,54 +229,36 @@ def run_period_simulation():
         base_score = calculate_score(w, base_in['markup'], base_in['promo'], base_in['hours'], base_in['del'], base_in['rec'], base_in['cred'], base_env)
         
         ratio = curr_score / base_score
-        
-        # Adjust OTC based on new markup input (simplified elasticity)
         otc_price_ratio = (1 + 30/100) / (1 + otc_markup/100) 
         otc_mult = ratio * otc_price_ratio
         
-        # Volumes
         actual_rx_vol = BASELINE_TARGETS['rx_demand'][ref_idx] * ratio
         actual_other_sales = BASELINE_TARGETS['other_sales'][ref_idx] * otc_mult
         
-        # Prices
         avg_ing_cost = env['avg_ing_cost']
         actual_rx_price = avg_ing_cost * (1 + curr_markup/100)
         
-        # Sales Values
         sales_rx = actual_rx_vol * actual_rx_price
         total_sales = sales_rx + actual_other_sales
         
-        # --- 3rd Party Logic ---
         pct_3rd = env['pct_3rd_party'] / 100.0
         vol_3rd = actual_rx_vol * pct_3rd
         
-        # --- INVENTORY & EMERGENCY ---
         # COGS
         cogs_rx = sales_rx / (1 + curr_markup/100)
         cogs_other = actual_other_sales / (1 + otc_markup/100)
         total_cogs = cogs_rx + cogs_other
         
-        # Emergency Purchase Logic (Simplified: If Demand > Avail Inventory)
-        # Assuming current inventory is fungible between Rx and Other for simulation simplicity
-        # or just tracking value.
+        # Emergency Purchase
         avail_inv = fin['inventory'] + rx_purch + otc_purch
         e_rx_pur = 0; e_otc_pur = 0
-        
         if total_cogs > avail_inv:
             shortage = total_cogs - avail_inv
-            # Split shortage 70/30 Rx/OTC
-            e_rx_pur = shortage * 0.7 * 1.1 # 10% penalty cost
+            e_rx_pur = shortage * 0.7 * 1.1 
             e_otc_pur = shortage * 0.3 * 1.1
-            total_cogs = avail_inv # Cap sales cost at inventory? No, we buy emergency.
-            # Update COGS to include penalty? usually implies margin hit.
-            # For this sim, we just add the cost to expenses/cash flow.
         
-        # --- EXPENSES ---
+        # Expenses
         weeks = 52 / env['periods_per_year']
-        
-        # Overtime Logic (Simple Assumption: Hours > 40 per Pharmacist/Clerk)
-        # Note: Input [6] is Store Hours, Input [22] is Manager Hours
-        # We estimate OT based on Store Hours vs 40 standard
         rp_overt_hours = max(0, curr_hours - 40) * pharmacists * weeks
         clk_overt_hours = max(0, curr_hours - 40) * clerks * weeks
         
@@ -292,83 +269,57 @@ def run_period_simulation():
         rent = total_sales * (0.045 if pid == 0 else 0.03)
         misc_ops = (total_sales * 0.015 + 2000) * (env['inflation'] / 1.0) 
         
-        # --- CASH FLOW ---
+        # Cash Flow
         collection_rate = 0.95 - (max(0, env['pct_3rd_party'] - 40) * 0.005)
         cash_in = total_sales * collection_rate
         
-        # Total Out
-        total_opex = base_pharm_cost + base_clerk_cost + benefits + rent + curr_promo + misc_ops + mgr_sal + mortgage
-        inv_purchases_cash = rx_purch + otc_purch + e_rx_pur + e_otc_pur
-        
-        # Accounts Payable logic
-        # You pay what you inputted (ap_paid), but incur new debt from purchases
-        # Actually in this sim, usually purchases go to AP, then you pay AP.
-        
-        temp_cash_out = total_opex + ap_paid 
-        start_cash = fin['cash']
+        total_opex_pre_interest = base_pharm_cost + base_clerk_cost + benefits + rent + curr_promo + misc_ops + mgr_sal + mortgage
+        temp_cash_out = total_opex_pre_interest + ap_paid 
         net_cash_flow = cash_in - temp_cash_out
-        temp_ending_cash = start_cash + net_cash_flow
+        temp_ending_cash = fin['cash'] + net_cash_flow
         
-        # Emergency Loan
         e_loan = 0
         interest = 0
         if temp_ending_cash < 2500:
             e_loan = 2500 - temp_ending_cash
             temp_ending_cash = 2500
             interest = e_loan * ((env['interest_rate']/100)/env['periods_per_year'])
-            # Add interest to expenses implies lower profit
-            total_opex += interest
-            
+        
+        total_opex = total_opex_pre_interest + interest
         gross_profit = total_sales - total_cogs
         net_profit = gross_profit - total_opex
         
-        # --- UPDATING FINANCIALS ---
+        # Update Fin
         fin['cash'] = temp_ending_cash
         fin['loan'] += e_loan
-        # Update AP: Old AP + New Purchases - Paid
         fin['ap'] = fin['ap'] + (rx_purch + otc_purch) - ap_paid
-        # Update Inventory: Old + Purch + Emergency - COGS
         fin['inventory'] = fin['inventory'] + (rx_purch + otc_purch + e_rx_pur + e_otc_pur) - total_cogs
-        
-        # Receivables (AR): Sales not collected
-        new_ar = total_sales * (1 - collection_rate)
-        # Assuming old AR is collected, new AR replaces it or accumulates? 
-        # Simplified: AR is roughly 1 period of uncollected sales
-        fin['ar'] = new_ar 
+        fin['ar'] = total_sales * (1 - collection_rate)
         
         total_assets = fin['cash'] + fin['inventory'] + fin['ar']
         total_liab = fin['ap'] + fin['loan']
         net_worth = total_assets - total_liab
         fin['net_worth'] = net_worth
         
-        # --- OUTPUT VARIABLE MAPPING ---
+        # Outputs
         res = {}
         res["TOT SALES"] = total_sales
         res["Rx SALES"] = sales_rx
         res["OTH SALES"] = actual_other_sales
         res["Avg Rx Pr"] = actual_rx_price
         res["Rx Ing $"] = avg_ing_cost
-        
-        # Rx GM%
         res["Rx GM%"] = (sales_rx - cogs_rx)/sales_rx if sales_rx else 0
-        
-        # 3-Pty GM% (Approximation: usually lower due to fees)
-        # Using Env fee
-        fee = env['avg_3rd_party_fee']
-        res["3-Pty GM%"] = ((actual_rx_price - fee) - avg_ing_cost) / (actual_rx_price - fee) if actual_rx_price else 0
-        
+        res["3-Pty GM%"] = ((actual_rx_price - env['avg_3rd_party_fee']) - avg_ing_cost) / (actual_rx_price - env['avg_3rd_party_fee']) if actual_rx_price else 0
         res["Tot #Rx's"] = actual_rx_vol
         res["3-Pty #Rx"] = vol_3rd
-        res["Copay Dis"] = copay_disc * actual_rx_vol # Total Discount Cost
+        res["Copay Dis"] = copay_disc * actual_rx_vol 
         res["OTC M'kup"] = otc_markup
-        res["Rx Mkt Sh"] = (actual_rx_vol / total_baseline_rx) * 100 # Approx Share
+        res["Rx Mkt Sh"] = (actual_rx_vol / total_baseline_rx) * 100 
         res["Store Hrs"] = curr_hours
         res["A/P Paid"] = ap_paid
         res["M'age Pay"] = mortgage
         res["E. Loan"] = e_loan
         res["Mgr Hrs"] = mgr_hours
-        res["RP OverT"] = rp_overt_hours / weeks # Show per week or total? Context implies total cost or hours. Let's show Cost or Hours? Label says "RP OverT" usually means Cost in outputs, but let's stick to calculated logic. Let's put Value ($) if wage context, or Hrs?
-        # Standard output usually shows $ for Overtime
         res["RP OverT"] = rp_overt_hours * wage_pharm * 1.5
         res["RP Hr Pay"] = wage_pharm
         res["Clk OverT"] = clk_overt_hours * wage_clerk * 1.5
@@ -378,9 +329,7 @@ def run_period_simulation():
         res["Cash Flow"] = net_cash_flow
         res["E Rx Pur"] = e_rx_pur
         res["E OTC Pur"] = e_otc_pur
-        res["RATIOS"] = np.nan # Header
-        
-        # Ratios
+        res["RATIOS"] = np.nan 
         res["Current"] = total_assets / total_liab if total_liab else 0
         res["Acid Test"] = (fin['cash'] + fin['ar']) / total_liab if total_liab else 0
         res["Turnover"] = total_cogs / fin['inventory'] if fin['inventory'] else 0
@@ -389,7 +338,7 @@ def run_period_simulation():
         res["G Margin"] = (gross_profit / total_sales) * 100 if total_sales else 0
         res["Profit"] = net_profit
         res["Debt/NW"] = total_liab / net_worth if net_worth else 0
-        res["LOCATION"] = p['type']
+        res["LOCATION"] = p['type'] # String value
         
         p['history'].append(res)
         p['status'] = "Pending"
@@ -415,7 +364,13 @@ def get_current_date_str():
     d = env.get('date_day', 30)
     m = env.get('date_month', 6)
     y = env.get('date_year', 89)
-    return f"{int(d)}/{int(m)}/19{int(y)}"
+    return f"{int(d)}/{int(m)}/{int(y)}"
+
+# 🟢 FIX: Safe Formatter for mixed types
+def safe_format(x):
+    if isinstance(x, (int, float)):
+        return "{:,.2f}".format(x)
+    return str(x)
 
 # ==========================================
 # 5. UI LAYOUT
@@ -435,6 +390,28 @@ def render_instructor():
         st.dataframe(get_leaderboard().style.format({"Net Worth": "${:,.0f}", "Last Profit": "${:,.0f}"}), use_container_width=True)
         st.divider()
         
+        # --- INSTRUCTOR FULL REPORT ---
+        st.subheader(f"📊 Full Market Report (Period {st.session_state.current_period - 1})")
+        if st.session_state.current_period > 1:
+            # Consolidate latest data from all stores
+            combined_data = {}
+            for pid, p in st.session_state.players.items():
+                if p['history']:
+                    last_res = p['history'][-1]
+                    combined_data[p['name']] = [last_res.get(k, 0) for k in OUTPUT_LABELS]
+            
+            df_combined = pd.DataFrame(combined_data, index=OUTPUT_LABELS)
+            
+            # Use safe formatting
+            st.dataframe(
+                df_combined.style.format(safe_format),
+                use_container_width=True,
+                height=1000
+            )
+        else:
+            st.info("No data available yet. Run Period 1 first.")
+            
+        st.divider()
         st.subheader(f"⚙️ Environment Control: Period {st.session_state.current_period}")
         st.caption("Double click any value to edit. Press ENTER to move to next row.")
         
@@ -444,17 +421,11 @@ def render_instructor():
             current_env_data.append({"Variable Name": item['label'], "Value": current_val, "Key": item['key']})
             
         df_env = pd.DataFrame(current_env_data)
-        
         edited_df = st.data_editor(
             df_env[["Variable Name", "Value"]],
-            use_container_width=True,
-            height=800,
-            column_config={
-                "Variable Name": st.column_config.TextColumn("Variable", disabled=True),
-                "Value": st.column_config.NumberColumn("Value", format="%.2f")
-            }
+            use_container_width=True, height=600,
+            column_config={"Variable Name": st.column_config.TextColumn("Variable", disabled=True), "Value": st.column_config.NumberColumn("Value", format="%.2f")}
         )
-        
         if st.button("💾 Save Environment Changes"):
             for index, row in edited_df.iterrows():
                 key = ENV_MAPPING[index]['key']
@@ -467,13 +438,11 @@ def render_instructor():
             st.write("Student Status:")
             status_data = [{"Store": p['name'], "Status": p['status']} for p in st.session_state.players.values()]
             st.dataframe(pd.DataFrame(status_data).T, use_container_width=True)
-        
         with c2:
             st.write("Actions:")
             if st.button("▶️ RUN PERIOD", type="primary", use_container_width=True):
                 run_period_simulation()
                 st.rerun()
-                
         if st.button("🔴 END GAME & RESET", type="secondary"):
             reset_game()
 
@@ -496,18 +465,10 @@ def render_student():
     with tab1:
         st.caption("Edit values below. Press Enter to confirm/move.")
         df_input = pd.DataFrame({"Decision Parameter": INPUT_LABELS, "Value": player['inputs']})
-        
         edited_inputs = st.data_editor(
-            df_input,
-            height=800,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Decision Parameter": st.column_config.TextColumn(disabled=True),
-                "Value": st.column_config.NumberColumn(format="%.2f")
-            }
+            df_input, height=800, use_container_width=True, hide_index=True,
+            column_config={"Decision Parameter": st.column_config.TextColumn(disabled=True), "Value": st.column_config.NumberColumn(format="%.2f")}
         )
-        
         if st.button("✅ Submit Decisions", type="primary"):
             player['inputs'] = edited_inputs['Value'].tolist()
             player['status'] = "Submitted"
@@ -516,28 +477,14 @@ def render_student():
     with tab2:
         if player['history']:
             st.subheader("Performance Report")
-            # --- NEW OUTPUT FORMAT ---
-            # Create a DataFrame where columns are Periods (P1, P2...) and rows are the Output Labels
-            
-            # 1. Prepare Data
             data_dict = {}
-            for h in player['history']:
-                p_label = f"Period {h.get('Period', '?')}" # Need to capture period number in calculation if not explicitly saved, or use index
-                # Note: In calc function I didn't save 'Period' key in 'res' but 'p['history']' is a list.
-                # Let's assume sequential based on list index
-                idx = player['history'].index(h) + 1
-                p_label = f"Period {idx}"
+            for i, h in enumerate(player['history']):
+                p_label = f"Period {h.get('Period', i+1)}"
                 data_dict[p_label] = [h.get(k, 0) for k in OUTPUT_LABELS]
             
             df_out = pd.DataFrame(data_dict, index=OUTPUT_LABELS)
-            
-            # 2. Formatting
-            # Use Styler to format numbers (Sales with $, Ratios with 2 decimals)
-            st.dataframe(
-                df_out.style.format("{:,.2f}", na_rep=""), 
-                use_container_width=True,
-                height=1000
-            )
+            # Use safe formatter here too
+            st.dataframe(df_out.style.format(safe_format), use_container_width=True, height=1000)
         else:
             st.info("Results will appear here after Period 1 is processed.")
             
@@ -547,7 +494,7 @@ def render_student():
 # ==========================================
 # 6. MAIN APP
 # ==========================================
-st.sidebar.title("💊 PharmaSim V50")
+st.sidebar.title("💊 PharmaSim V51")
 role = st.sidebar.radio("Role:", ["Student", "Instructor"])
 
 if role == "Instructor":
