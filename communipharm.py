@@ -5,7 +5,7 @@ import numpy as np
 # ==========================================
 # 1. CONSTANTS & BASELINE DATA
 # ==========================================
-st.set_page_config(page_title="PharmaSim V43.0 (Leaderboard)", layout="wide")
+st.set_page_config(page_title="PharmaSim V44.0 (Full Control)", layout="wide")
 
 # Store Categories & Weights
 STORE_CATEGORY = {
@@ -18,7 +18,7 @@ WEIGHTS = {
     "Shopping": {"rx_price": 10, "adv": 15, "hours": 12, "delivery": 1, "records": 1, "credit": 1, "inventory": 10, "prev_share": 5, "otc_markup": 20, "otc_adv": 10, "otc_hours": 15}
 }
 
-# Baseline Inputs (Reference P1)
+# Baseline Inputs
 BASELINE_INPUTS = [
     {"markup": 60, "promo": 600, "hours": 46, "del": 1, "rec": 1, "cred": 1},
     {"markup": 30, "promo": 1500, "hours": 60, "del": 1, "rec": 1, "cred": 0},
@@ -29,7 +29,7 @@ BASELINE_INPUTS = [
     {"markup": 49, "promo": 600, "hours": 48, "del": 0, "rec": 1, "cred": 1}
 ]
 
-# Baseline Targets (Reference P1 Output)
+# Baseline Targets
 BASELINE_TARGETS = {
     "rx_demand": [4655, 5971, 9091, 7721, 5199, 4927, 4023],
     "other_sales": [13136, 85384, 97425, 87573, 123698, 108372, 5911],
@@ -43,9 +43,17 @@ INIT_FINANCIALS = {
     "ap": [60889, 102000, 61626, 115000, 98000, 95000, 58000]
 }
 
-# Initial Environment
+# Expanded Initial Environment (Based on instruc1p1)
 INIT_ENV = {
-    'avg_ing_cost': 11.23, 'interest_rate': 10.5, 'ss_wc_rate': 11.0, 'periods_per_year': 6, 'inflation': 1.1
+    'avg_ing_cost': 11.23, 
+    'interest_rate': 10.5, 
+    'ss_wc_rate': 11.0, 
+    'periods_per_year': 6, 
+    'inflation': 1.1,
+    'max_promo': 1200,             # New: Affects Ad Score
+    'pct_3rd_party': 46.43,        # New: Affects Cash Flow Collection
+    'avg_rx_price_max': 23.00,     # New: Benchmark
+    'avg_sales_per_clerk': 28.5    # New: Benchmark
 }
 
 INPUT_LABELS = [
@@ -81,7 +89,6 @@ def init_game(n_stores):
             40000, 16000, INIT_FINANCIALS['ap'][ref_idx]
         ]
         
-        # Calculate Initial Net Worth (Approx) for Display
         init_nw = INIT_FINANCIALS['cash'][ref_idx] + INIT_FINANCIALS['inventory'][ref_idx] - INIT_FINANCIALS['ap'][ref_idx]
 
         st.session_state.players[i] = {
@@ -108,12 +115,17 @@ def reset_game():
     st.rerun()
 
 # ==========================================
-# 3. CORE LOGIC
+# 3. CORE LOGIC (Updated with New Env Vars)
 # ==========================================
-def calculate_score(w, markup, promo, hours, delivery, records, credit, base_cost):
-    est_price = base_cost * (1 + markup/100) 
+def calculate_score(w, markup, promo, hours, delivery, records, credit, env):
+    # Price Score (Using Avg Ing Cost)
+    est_price = env['avg_ing_cost'] * (1 + markup/100) 
     score_price = (1.0 / est_price) * w["rx_price"] * 1000 
-    score_adv = (np.log1p(promo) / np.log1p(1000)) * w["adv"]
+    
+    # Promo Score (Using Max Promo from Env as denominator)
+    # If Instructor increases Max Promo, students need to spend more to get same score
+    score_adv = (np.log1p(promo) / np.log1p(env['max_promo'])) * w["adv"]
+    
     score_hours = (hours / 50) * w["hours"]
     score_service = (delivery * w["delivery"]) + (records * w["records"]) + (credit * w["credit"])
     score_fixed = w["inventory"] + w["prev_share"]
@@ -131,13 +143,17 @@ def run_period_simulation():
         curr_markup = inp[0]; curr_promo = inp[1]; curr_hours = inp[2]
         curr_del = inp[7]; curr_rec = inp[8]; curr_cred = inp[9]
         
-        # Demand Logic
+        # Demand Logic (With updated Env)
         cat = STORE_CATEGORY.get(ref_idx, "Neighbor")
         w = WEIGHTS[cat]
         base_in = BASELINE_INPUTS[ref_idx]
         
-        curr_score = calculate_score(w, curr_markup, curr_promo, curr_hours, curr_del, curr_rec, curr_cred, env['avg_ing_cost'])
-        base_score = calculate_score(w, base_in['markup'], base_in['promo'], base_in['hours'], base_in['del'], base_in['rec'], base_in['cred'], 11.23)
+        # Calculate Scores
+        curr_score = calculate_score(w, curr_markup, curr_promo, curr_hours, curr_del, curr_rec, curr_cred, env)
+        # Base score uses default P1 env values for fairness in ratio
+        base_env = INIT_ENV.copy() 
+        base_score = calculate_score(w, base_in['markup'], base_in['promo'], base_in['hours'], base_in['del'], base_in['rec'], base_in['cred'], base_env)
+        
         ratio = curr_score / base_score
         
         otc_price_ratio = (1 + base_in['markup']/100) / (1 + curr_markup/100)
@@ -169,16 +185,21 @@ def run_period_simulation():
         base_wages = (pharmacists * wage_pharm * curr_hours * weeks) + (sales_clerks * wage_clerk * curr_hours * weeks)
         benefits = base_wages * (env['ss_wc_rate'] / 100.0)
         rent = total_sales * (0.045 if pid == 0 else 0.03)
-        misc_ops = total_sales * 0.015 + 2000
         
-        # Interest & Loan
+        # Misc Ops (Affected by Inflation)
+        misc_ops = (total_sales * 0.015 + 2000) * (env['inflation'] / 1.0) # Scale by inflation
+        
         purchases = inp[10] + inp[11]
         ap_payment = inp[12]
         
-        cash_in = total_sales * 0.95
-        total_opex_pre_interest = base_wages + benefits + rent + curr_promo + misc_ops
+        # Cash Flow (Affected by 3rd Party %)
+        # Higher 3rd party % means less immediate cash
+        # Base Cash Collection = 95% (Default)
+        # If 3rd party > 50%, collection drops
+        collection_rate = 0.95 - (max(0, env['pct_3rd_party'] - 40) * 0.005) # Simple penalty
+        cash_in = total_sales * collection_rate
         
-        # Temporary cash check for loan
+        total_opex_pre_interest = base_wages + benefits + rent + curr_promo + misc_ops
         temp_cash_out = total_opex_pre_interest + ap_payment
         temp_ending_cash = fin['cash'] + (cash_in - temp_cash_out)
         
@@ -198,11 +219,11 @@ def run_period_simulation():
         fin['inventory'] = fin['inventory'] + purchases - (cogs_rx + cogs_other)
         fin['loan'] += loan
         
-        assets = fin['cash'] + fin['inventory'] + (total_sales * 0.05)
+        assets = fin['cash'] + fin['inventory'] + (total_sales * (1-collection_rate)) # Uncollected AR
         liabilities = fin['ap'] + fin['loan']
         net_worth = assets - liabilities
         
-        fin['net_worth'] = net_worth # Store for leaderboard
+        fin['net_worth'] = net_worth
         
         p['history'].append({
             "Period": st.session_state.current_period,
@@ -224,28 +245,15 @@ def get_leaderboard():
     for pid, p in st.session_state.players.items():
         nw = p['financials']['net_worth']
         np_val = p['history'][-1]['NET PROFIT'] if p['history'] else 0
-        data.append({
-            "Store Name": p['name'],
-            "Net Worth": nw,
-            "Last Profit": np_val
-        })
+        data.append({"Store Name": p['name'], "Net Worth": nw, "Last Profit": np_val})
     df = pd.DataFrame(data).sort_values("Net Worth", ascending=False)
-    
-    # Add Rank Emoji
-    ranks = []
-    for i in range(len(df)):
-        if i == 0: ranks.append("🥇 1st")
-        elif i == 1: ranks.append("🥈 2nd")
-        elif i == 2: ranks.append("🥉 3rd")
-        else: ranks.append(f"{i+1}th")
-    df.insert(0, "Rank", ranks)
+    ranks = ["🥇 1st", "🥈 2nd", "🥉 3rd"] + [f"{i+1}th" for i in range(3, len(df))]
+    df.insert(0, "Rank", ranks[:len(df)])
     return df
 
 # ==========================================
 # 5. UI LAYOUT
 # ==========================================
-
-# --- INSTRUCTOR ---
 def render_instructor():
     st.header("👨‍🏫 Instructor Dashboard")
     
@@ -257,24 +265,39 @@ def render_instructor():
                 init_game(n)
                 st.rerun()
     else:
-        # Leaderboard
         st.subheader("🏆 Live Leaderboard")
-        df_rank = get_leaderboard()
-        st.dataframe(df_rank.style.format({"Net Worth": "${:,.0f}", "Last Profit": "${:,.0f}"}), use_container_width=True)
-        
+        st.dataframe(get_leaderboard().style.format({"Net Worth": "${:,.0f}", "Last Profit": "${:,.0f}"}), use_container_width=True)
         st.divider()
         
-        # Simulation Control
-        st.subheader(f"⚙️ Control Panel: Period {st.session_state.current_period}")
-        with st.expander("🌍 Environment Settings", expanded=False):
-            c1, c2, c3 = st.columns(3)
+        # --- NEW: EXPANDED ENVIRONMENT CONTROL ---
+        st.subheader(f"⚙️ Environment Control: Period {st.session_state.current_period}")
+        with st.expander("🌍 Edit Market Variables (Matches instruc1p1)", expanded=True):
             env = st.session_state.market_env
-            new_int = c1.number_input("Interest %", value=env['interest_rate'])
-            new_tax = c2.number_input("SS&WC %", value=env['ss_wc_rate'])
-            new_cost = c3.number_input("Ing Cost $", value=env['avg_ing_cost'])
-            if st.button("Update Env"):
-                env.update({'interest_rate': new_int, 'ss_wc_rate': new_tax, 'avg_ing_cost': new_cost})
-                st.success("Saved!")
+            
+            # Using Columns for organized layout
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                new_int = st.number_input("Interest Rate (%)", value=env['interest_rate'])
+                new_inf = st.number_input("Inflation Rate (%)", value=env['inflation'])
+            with c2:
+                new_tax = st.number_input("SS & WC Rate (%)", value=env['ss_wc_rate'])
+                new_3rd = st.number_input("3rd Party Market (%)", value=env['pct_3rd_party'])
+            with c3:
+                new_cost = st.number_input("Avg Ingred. Cost ($)", value=env['avg_ing_cost'])
+                new_promo = st.number_input("Max Promo Exp ($)", value=env['max_promo'])
+            with c4:
+                new_periods = st.number_input("Periods per Year", value=env['periods_per_year'])
+                # Placeholder for visual consistency
+                st.markdown("**Note:** Changes apply to next run.")
+
+            if st.button("💾 Save Environment Changes"):
+                st.session_state.market_env.update({
+                    'interest_rate': new_int, 'inflation': new_inf,
+                    'ss_wc_rate': new_tax, 'pct_3rd_party': new_3rd,
+                    'avg_ing_cost': new_cost, 'max_promo': new_promo,
+                    'periods_per_year': new_periods
+                })
+                st.success("Environment Updated Successfully!")
 
         # Status & Run
         c1, c2 = st.columns([3, 1])
@@ -289,29 +312,23 @@ def render_instructor():
                 run_period_simulation()
                 st.rerun()
                 
-        # --- RESET BUTTON ---
         st.divider()
-        st.warning("⛔ Danger Zone")
         if st.button("🔴 END GAME & RESET", type="secondary"):
             reset_game()
 
-# --- STUDENT ---
 def render_student():
     if st.session_state.game_state == "SETUP":
-        st.warning("⏳ Waiting for Instructor to start the game...")
+        st.warning("⏳ Waiting for Instructor...")
         return
 
     st.header(f"🛒 Student Interface (Period {st.session_state.current_period})")
-    
     store_ids = list(st.session_state.players.keys())
     labels = {i: f"{st.session_state.players[i]['name']} ({st.session_state.players[i]['status']})" for i in store_ids}
     sel_id = st.selectbox("Select Store:", store_ids, format_func=lambda x: labels[x])
     player = st.session_state.players[sel_id]
     
     new_name = st.text_input("Store Name:", value=player['name'])
-    if new_name != player['name']:
-        player['name'] = new_name
-        st.rerun()
+    if new_name != player['name']: player['name'] = new_name; st.rerun()
         
     tab1, tab2, tab3 = st.tabs(["📝 Decisions", "📊 My Results", "🏆 Rankings"])
     
@@ -322,33 +339,26 @@ def render_student():
             if st.form_submit_button("✅ Submit"):
                 player['inputs'] = edited['Value'].tolist()
                 player['status'] = "Submitted"
-                st.success("Submitted!")
-                st.rerun()
+                st.success("Submitted!"); st.rerun()
                 
     with tab2:
         if player['history']:
             hist = pd.DataFrame(player['history']).set_index("Period")
             st.dataframe(hist.style.format("{:,.2f}"), use_container_width=True)
             last = player['history'][-1]
-            st.metric("Current Net Worth", f"${last['Net Worth']:,.0f}", delta=f"Profit: ${last['NET PROFIT']:,.0f}")
-        else:
-            st.info("Results will appear here after Period 1.")
+            st.metric("Net Worth", f"${last['Net Worth']:,.0f}", delta=f"Profit: ${last['NET PROFIT']:,.0f}")
+        else: st.info("Results appear after Period 1.")
             
     with tab3:
-        st.subheader("Current Market Standings")
-        df_rank = get_leaderboard()
-        # Highlight user row
-        st.dataframe(df_rank.style.apply(lambda x: ['background: #e6ffe6' if x['Store Name'] == player['name'] else '' for i in x], axis=1).format({"Net Worth": "${:,.0f}", "Last Profit": "${:,.0f}"}), use_container_width=True)
+        st.dataframe(get_leaderboard().style.apply(lambda x: ['background: #e6ffe6' if x['Store Name'] == player['name'] else '' for i in x], axis=1).format({"Net Worth": "${:,.0f}", "Last Profit": "${:,.0f}"}), use_container_width=True)
 
 # ==========================================
 # 6. MAIN APP
 # ==========================================
-st.sidebar.title("💊 PharmaSim V43")
+st.sidebar.title("💊 PharmaSim V44")
 role = st.sidebar.radio("Role:", ["Student", "Instructor"])
 
 if role == "Instructor":
-    pwd = st.sidebar.text_input("🔑 Password", type="password")
-    if pwd == "admin": render_instructor()
+    if st.sidebar.text_input("🔑 Password", type="password") == "admin": render_instructor()
     else: st.info("Login required.")
-else:
-    render_student()
+else: render_student()
